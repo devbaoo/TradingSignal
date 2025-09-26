@@ -1,0 +1,43 @@
+{
+  "timestamp": "2025-09-26T04:09:55.588299",
+  "symbol": "BTC/USDT",
+  "timeframe": "1h",
+  "direction": "SHORT",
+  "strategy": "AdvancedTechnicalAnalysis",
+  "market_trend": "BEARISH",
+  "trend_strength": -2,
+  "momentum_state": "NEUTRAL_TO_BEARISH",
+  "volatility_level": "HIGH",
+  "market_strength": 4.5,
+  "detected_signals": [
+    "RSI_OVERSOLD_RECOVERY",
+    "HIGH_VOLATILITY"
+  ],
+  "current_rsi": 31.6,
+  "current_macd": -752.82,
+  "macd_signal": -654.21,
+  "bb_position": 15.2,
+  "entry_price": 109500.0,
+  "entry_range": [
+    109445.25,
+    109554.75
+  ],
+  "stop_loss": 112975.0,
+  "take_profit": [
+    105262.5,
+    101812.5,
+    98362.5
+  ],
+  "position_size_usdt": 6309.15,
+  "position_size_percent": 63.1,
+  "recommended_leverage": 2,
+  "max_leverage": 3,
+  "risk_per_trade": 2.0,
+  "safety_score": 6,
+  "confidence_level": "MEDIUM",
+  "risk_level": "MODERATE",
+  "risk_reward_ratio": 1.22,
+  "atr": 1642.5,
+  "atr_percent": 1.5,
+  "volatility_rank": "HIGH"
+}

@@ -1,0 +1,27 @@
+{
+  "risk_management": {
+    "max_risk_per_trade": 0.015,
+    "max_daily_risk": 0.05,
+    "position_sizing_method": "volatility_adjusted",
+    "use_kelly_criterion": true,
+    "stop_loss_method": "atr_based",
+    "take_profit_method": "risk_reward_ratio"
+  },
+  "performance_enhancements": {
+    "volatility_filter": true,
+    "trend_filter": true,
+    "minimum_risk_reward": 1.5,
+    "correlation_filter": true,
+    "time_based_exits": true
+  },
+  "strategy_specific": {
+    "momentum_threshold": 1.2,
+    "volatility_percentile": 0.25,
+    "trend_strength_min": 0.6,
+    "rsi_optimization": {
+      "bull_min": 55,
+      "bull_max": 65,
+      "confirmation_period": 3
+    }
+  }
+}

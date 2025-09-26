@@ -1,0 +1,30 @@
+{
+  "symbol": "BTC/USDT",
+  "direction": "LONG",
+  "timestamp": "2025-09-26T03:45:11.935915",
+  "timeframe": "1h",
+  "strategy": "DemoTrendMomentum",
+  "entry_price": 109500.0,
+  "entry_range": [
+    109390.5,
+    109609.5
+  ],
+  "stop_loss": 106215.0,
+  "take_profit": [
+    113606.25,
+    116070.0,
+    119355.0
+  ],
+  "position_size_usdt": 6666.67,
+  "position_size_percent": 66.7,
+  "recommended_leverage": 3,
+  "risk_per_trade": 2.0,
+  "safety_score": 8,
+  "confidence_level": "HIGH",
+  "risk_level": "CONSERVATIVE",
+  "risk_reward_ratio": 1.25,
+  "market_trend": "BULLISH",
+  "market_strength": 0.75,
+  "current_rsi": 52.3,
+  "atr": 1642.5
+}

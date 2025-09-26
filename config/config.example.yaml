@@ -1,0 +1,309 @@
+# Trading Insight Configuration File
+# Copy this file to config.yaml and modify as needed
+
+# Data configuration
+data_dir: "data"
+exchanges:
+  binance:
+    api_key: ${BINANCE_API_KEY} # Set in environment or replace with actual key
+    secret: ${BINANCE_SECRET} # Set in environment or replace with actual secret
+    sandbox: true # Use testnet for paper trading
+  bybit:
+    api_key: ${BYBIT_API_KEY}
+    secret: ${BYBIT_SECRET}
+    sandbox: true
+
+# Data quality control
+data_quality:
+  remove_outliers: true
+  outlier_detection: "iqr" # Options: "iqr", "zscore"
+  outlier_threshold: 3.0
+  fill_gaps: true
+  gap_fill_method: "forward" # Options: "forward", "backward", "interpolate"
+  max_gap_size_minutes: 60
+
+# Supported trading pairs
+symbols:
+  crypto:
+    - "BTC/USDT"
+    - "ETH/USDT"
+  commodities:
+    - "XAUUSD" # Gold (requires CSV data or external feed)
+
+# Timeframes to support
+timeframes: ["15m", "1h", "4h", "1d"]
+
+# Strategy configurations
+strategies:
+  StrategyMomo:
+    parameters:
+      ema_regime_period: 200 # Regime filter EMA period
+      rsi_period: 14 # RSI calculation period
+      rsi_bull_min: 50 # RSI minimum for bullish momentum
+      rsi_bull_max: 70 # RSI maximum for bullish momentum
+      rsi_bear_min: 30 # RSI minimum for bearish momentum
+      rsi_bear_max: 50 # RSI maximum for bearish momentum
+      macd_fast: 12 # MACD fast EMA
+      macd_slow: 26 # MACD slow EMA
+      macd_signal: 9 # MACD signal EMA
+      use_volatility_filter: true # Use volatility filter
+      volatility_percentile: 0.3 # Low volatility threshold (30th percentile)
+    allow_short: false # Allow short positions
+    position_sizing: "fixed_fractional"
+    risk_per_trade: 0.02 # 2% risk per trade
+    risk:
+      stop_loss_atr_mult: 2.0 # Stop loss = 2 x ATR
+      take_profit_atr_mult: 3.0 # Take profit = 3 x ATR
+      trailing_stop_atr_mult: 1.0 # Trailing stop = 1 x ATR
+
+  StrategyMeanRev:
+    parameters:
+      bb_period: 20 # Bollinger Bands period
+      bb_std: 2.0 # Bollinger Bands standard deviation
+      rsi_period: 14 # RSI period
+      rsi_oversold: 30 # RSI oversold threshold
+      rsi_overbought: 70 # RSI overbought threshold
+      williams_r_period: 14 # Williams %R period
+      williams_r_oversold: -80 # Williams %R oversold
+      williams_r_overbought: -20 # Williams %R overbought
+      use_volatility_filter: true
+      volatility_percentile: 0.4 # Low volatility threshold
+    allow_short: false
+    position_sizing: "fixed_fractional"
+    risk_per_trade: 0.015 # 1.5% risk per trade (more conservative)
+    risk:
+      stop_loss_atr_mult: 1.5 # Stop loss = 1.5 x ATR
+      take_profit_atr_mult: 2.0 # Take profit = 2 x ATR
+      trailing_stop_atr_mult: 1.0 # Trailing stop = 1 x ATR
+
+# Machine Learning configuration
+ml:
+  features:
+    momentum_periods: [5, 10, 20]
+    volatility_periods: [10, 20, 50]
+    regime_ma_periods: [50, 100, 200]
+    use_volume_features: true
+    use_microstructure: true
+
+  target_labeling:
+    method: "return_based" # Options: "return_based", "triple_barrier", "trend_continuation"
+    horizon: 5 # Forward-looking periods
+    threshold: 0.02 # 2% return threshold
+
+  models:
+    primary: "random_forest" # Options: "random_forest", "xgboost"
+    random_forest:
+      n_estimators: 100
+      max_depth: 10
+      min_samples_split: 5
+      min_samples_leaf: 2
+      random_state: 42
+    xgboost:
+      n_estimators: 100
+      max_depth: 6
+      learning_rate: 0.1
+      subsample: 0.8
+      colsample_bytree: 0.8
+      random_state: 42
+
+  cross_validation:
+    method: "time_series" # Time-based CV to prevent lookahead bias
+    n_splits: 5
+    test_size: 0.2
+    validation_size: 0.2
+
+  feature_selection:
+    method: "importance" # Options: "importance", "correlation", "recursive"
+    max_features: 50 # Maximum number of features to use
+    importance_threshold: 0.001 # Minimum importance to keep feature
+
+# Risk management
+risk:
+  max_positions: 3 # Maximum concurrent positions
+  max_risk_per_symbol: 0.05 # Maximum risk per symbol (5%)
+  max_daily_risk: 0.10 # Maximum daily risk (10%)
+  max_drawdown: 0.20 # Maximum drawdown before shutdown (20%)
+  position_sizing: "fixed_fractional"
+  risk_per_trade: 0.02 # Default risk per trade
+
+  # Circuit breakers
+  daily_loss_limit: 0.05 # Stop trading if daily loss exceeds 5%
+  consecutive_losses: 5 # Stop after 5 consecutive losses
+
+  # Position sizing alternatives
+  fixed_amount: 1000 # Fixed dollar amount per trade
+  atr_position_mult: 10 # ATR multiplier for position sizing
+
+# Backtesting configuration
+backtest:
+  initial_capital: 10000 # Starting capital
+  fee_rate: 0.001 # 0.1% fee per side (typical crypto exchange)
+
+  # Slippage modeling
+  slippage_model: "bps" # Options: "fixed", "bps", "adaptive"
+  slippage_bps: 2 # 2 basis points slippage
+  slippage_fixed: 0.0005 # Fixed slippage amount
+
+  # Walk-forward analysis
+  walk_forward:
+    enabled: true
+    train_period_months: 12 # 12 months for training
+    test_period_months: 3 # 3 months for testing
+    step_months: 1 # 1 month step size
+    min_trades_per_period: 10 # Minimum trades required per period
+
+  # Fill logic
+  fill_method: "next_open" # Options: "next_open", "next_close", "intrabar"
+  intrabar_fill: true # Use high/low for stop/limit fills
+
+  # Performance calculation
+  benchmark: "buy_and_hold" # Benchmark strategy
+  risk_free_rate: 0.02 # Annual risk-free rate (2%)
+
+# Optimization configuration
+optimization:
+  engine: "optuna" # Optimization engine (only Optuna for now)
+
+  # Objective function
+  objective: "profit_factor" # Options: "sharpe", "profit_factor", "calmar", "sortino"
+  maximize: true # Maximize the objective
+
+  # Constraints
+  constraints:
+    min_trades: 20 # Minimum number of trades
+    max_drawdown: 0.25 # Maximum allowed drawdown (25%)
+    min_win_rate: 0.3 # Minimum win rate (30%)
+
+  # Optuna settings
+  optuna:
+    n_trials: 200 # Number of optimization trials
+    timeout: 3600 # Timeout in seconds (1 hour)
+    sampler: "tpe" # Tree-structured Parzen Estimator
+    pruner: "median" # Median pruner for early stopping
+
+  # Parameter search spaces (example for StrategyMomo)
+  parameter_spaces:
+    StrategyMomo:
+      rsi_bull_min: [40, 60] # Range for RSI bull minimum
+      rsi_bull_max: [60, 80] # Range for RSI bull maximum
+      stop_loss_atr_mult: [1.0, 3.0] # Stop loss ATR multiplier range
+      take_profit_atr_mult: [2.0, 5.0] # Take profit ATR multiplier range
+    StrategyMeanRev:
+      bb_std: [1.5, 2.5] # Bollinger Bands standard deviation
+      rsi_oversold: [20, 35] # RSI oversold threshold
+      rsi_overbought: [65, 80] # RSI overbought threshold
+      stop_loss_atr_mult: [1.0, 2.0]
+
+# Reporting configuration
+reporting:
+  output_dir: "runs" # Directory for reports
+  formats: ["html", "csv"] # Output formats
+  include_charts: true # Include performance charts
+  chart_format: "png" # Chart format (png, svg)
+
+  # Metrics to calculate
+  metrics:
+    - "total_return"
+    - "cagr"
+    - "sharpe_ratio"
+    - "sortino_ratio"
+    - "max_drawdown"
+    - "win_rate"
+    - "profit_factor"
+    - "expectancy"
+    - "var_95" # Value at Risk (95%)
+    - "cvar_95" # Conditional VaR (95%)
+
+  # Benchmark comparison
+  benchmarks:
+    - "buy_and_hold"
+    - "equal_weight_rebalance"
+
+# Live trading configuration
+live_trading:
+  enabled: false # MUST be explicitly enabled
+  paper_trading: true # Start with paper trading
+
+  # Exchange settings
+  exchange: "binance" # Primary exchange
+  testnet: true # Use testnet/sandbox
+
+  # Order management
+  order_timeout: 30 # Order timeout in seconds
+  retry_attempts: 3 # Number of retry attempts
+  partial_fill_threshold: 0.95 # Accept partial fills > 95%
+
+  # Risk controls
+  daily_loss_limit: 0.03 # 3% daily loss limit
+  position_limit_per_symbol: 0.1 # 10% of capital per symbol
+
+  # Monitoring
+  heartbeat_interval: 60 # Send heartbeat every 60 seconds
+  log_trades: true # Log all trades
+  notify_trades: false # Send notifications for trades
+
+  # Safety features
+  max_order_value: 1000 # Maximum single order value
+  require_confirmation: true # Require manual confirmation for orders
+  emergency_stop: true # Enable emergency stop functionality
+
+# Logging configuration
+logging:
+  level: "INFO" # Options: DEBUG, INFO, WARNING, ERROR
+  file: "logs/trading_insight.log" # Log file path
+  max_file_size: "10MB" # Maximum log file size
+  backup_count: 5 # Number of backup log files
+  include_timestamp: true # Include timestamps in logs
+
+  # Component-specific logging levels
+  components:
+    data: "INFO"
+    strategy: "INFO"
+    backtest: "INFO"
+    optimization: "WARNING" # Less verbose for optimization
+    live_trading: "DEBUG" # More detailed for live trading
+
+# System configuration
+system:
+  random_seed: 42 # For reproducibility
+  max_workers: 4 # Maximum number of worker processes
+  memory_limit: "4GB" # Memory usage limit
+  temp_dir: "/tmp/trading_insight" # Temporary directory
+
+  # Performance monitoring
+  enable_profiling: false # Enable performance profiling
+  profile_output: "profiles/" # Profile output directory
+
+# Alerts and notifications (optional)
+alerts:
+  enabled: false
+  email:
+    smtp_server: "smtp.gmail.com"
+    smtp_port: 587
+    username: ${EMAIL_USERNAME}
+    password: ${EMAIL_PASSWORD}
+    from_address: ${EMAIL_FROM}
+    to_addresses:
+      - ${EMAIL_TO}
+
+  # Alert conditions
+  conditions:
+    - type: "drawdown"
+      threshold: 0.1 # Alert if drawdown > 10%
+    - type: "daily_pnl"
+      threshold: -0.05 # Alert if daily P&L < -5%
+    - type: "trade_count"
+      threshold: 0 # Alert if no trades in period
+      period: "1d"
+
+# Development and testing
+development:
+  debug_mode: false # Enable debug features
+  test_data_only: false # Use only test data
+  mock_trading: false # Mock all trading operations
+  save_intermediate: true # Save intermediate results
+
+  # Performance testing
+  benchmark_data_loading: false # Benchmark data loading performance
+  benchmark_indicators: false # Benchmark indicator calculation
+  benchmark_backtest: false # Benchmark backtesting performance
