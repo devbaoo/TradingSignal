@@ -11,6 +11,7 @@ import time
 import random
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, Optional
 
 # Technical Analysis
 import ta
@@ -84,6 +85,15 @@ if 'signals_history' not in st.session_state:
 
 class TradingGUI:
     def __init__(self):
+        # Error tracking and telemetry (silent monitoring)
+        self.error_counters = {
+            'api_errors': 0,
+            'data_parse_errors': 0,
+            'signal_generation_errors': 0,
+            'batch_loading_errors': 0
+        }
+        self.error_details = []  # Store recent error details for debugging
+        
         self.supported_symbols = [
             # Major Coins (Top 10)
             "BTC/USDT", "ETH/USDT", "BNB/USDT", "XRP/USDT", "ADA/USDT",
@@ -228,11 +238,33 @@ class TradingGUI:
                         break
                         
             return current_prices
-            
         except Exception as e:
-            st.error(f"❌ Error fetching real prices: {e}")
-            st.error("🌐 Please check your internet connection - No fallback data available")
+            self._track_error('api_errors', f"Failed to get current prices: {str(e)}")
             return {}
+
+    def _track_error(self, error_type: str, error_detail: str, symbol: str = None):
+        """Silent error tracking for monitoring - does not display to user"""
+        self.error_counters[error_type] = self.error_counters.get(error_type, 0) + 1
+        
+        # Keep only recent 50 errors to prevent memory issues
+        if len(self.error_details) > 50:
+            self.error_details = self.error_details[-25:]  # Keep last 25
+        
+        self.error_details.append({
+            'type': error_type,
+            'detail': error_detail,
+            'symbol': symbol,
+            'timestamp': datetime.now().isoformat()
+        })
+
+    def get_error_telemetry(self) -> Dict:
+        """Get error telemetry for debugging (not shown in UI)"""
+        return {
+            'counters': self.error_counters.copy(),
+            'recent_errors': self.error_details[-10:] if self.error_details else [],
+            'total_errors': sum(self.error_counters.values()),
+            'error_rate': sum(self.error_counters.values()) / max(1, len(self.supported_symbols))
+        }
     
     def load_market_data(self, symbol, timeframe, limit=None, use_cache=True):
         """Load REAL market data từ Binance API với caching"""
@@ -303,7 +335,8 @@ class TradingGUI:
             return df
             
         except Exception as e:
-            # Only show error in UI if not in batch mode and we have st context
+            self._track_error('api_errors', f"Load market data failed for {symbol}: {str(e)}", symbol)
+            return None
             if use_cache:  # This means we're in normal UI mode, not batch mode
                 try:
                     # Check if we're in Streamlit context
@@ -321,6 +354,7 @@ class TradingGUI:
                 # Bypass cache in batch mode để tránh Streamlit session state issues
                 return symbol, self.load_market_data(symbol, timeframe, limit=limit, use_cache=False)
             except Exception as e:
+                self._track_error('batch_loading_errors', f"Batch load failed for {symbol}: {str(e)}", symbol)
                 return symbol, None
         
         # Use ThreadPoolExecutor for parallel API calls
@@ -401,13 +435,19 @@ class TradingGUI:
                 reward = entry_price - take_profit_1
                 
             risk_reward_ratio = reward / risk if risk > 0 else 0
-            if risk_reward_ratio < 1.5:  # Temporarily lower from 2.0 to 1.5
-                return None  # R/R too low
+            if risk_reward_ratio < 2.0:  # Institutional standard - minimum 1:2.0 R/R
+                return None  # R/R too low for institutional trading
             
             # Quick safety score
             confidence_score = latest_signal.get('confidence', 0.5)
             regime = latest_signal.get('regime')
-            regime_strength = regime.regime_strength if regime else 0.5
+            # Handle both object and dict regime types
+            if hasattr(regime, 'regime_strength'):
+                regime_strength = regime.regime_strength
+            elif isinstance(regime, dict):
+                regime_strength = regime.get('strength', 0.5)
+            else:
+                regime_strength = 0.5
             
             safety_score = min(10, int(confidence_score * 4 + regime_strength * 4 + min(risk_reward_ratio/3, 2)))
             
@@ -458,6 +498,7 @@ class TradingGUI:
             return result
             
         except Exception as e:
+            self._track_error('signal_generation_errors', f"Signal generation failed for {symbol}: {str(e)}", symbol)
             return None
     
     def generate_signal(self, symbol, timeframe, balance, selected_leverage, min_safety, tp_percent=None, sl_percent=None):
