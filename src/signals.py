@@ -208,31 +208,36 @@ class SafetyScorer:
 
 
 class PositionSizer:
-    """Calculates optimal position size based on risk and safety."""
+    """Calculates optimal position size based on risk and safety with conservative limits."""
     
     def __init__(self, account_balance: float = 10000):
         self.account_balance = account_balance
+        self.max_portfolio_risk = 0.07  # Max 7% total portfolio risk
+        self.max_concurrent_positions = 3  # Max 3 positions at once
+        self.max_exposure_per_trade = 0.25  # Max 25% account per trade
+        self.daily_loss_limit = 0.03  # Circuit breaker: 3% daily loss
+        self.max_consecutive_losses = 3  # Stop after 3 consecutive losses
         
     def calculate_position_size(self,
                               entry_price: float,
                               stop_loss: float,
                               safety_score: int,
-                              base_risk_per_trade: float = 0.02) -> Tuple[float, int, float, float]:
-        """Calculate position size and leverage recommendation."""
+                              base_risk_per_trade: float = 0.01) -> Tuple[float, int, float, float]:  # Reduced to 1%
+        """Calculate conservative position size with multiple risk controls."""
         
-        # Adjust risk based on safety score
+        # Conservative risk multipliers (max 1.1x)
         risk_multiplier = {
-            10: 1.2,  # Safest - can risk slightly more
-            9: 1.1,
-            8: 1.0,   # Normal risk
-            7: 0.9,
-            6: 0.8,
-            5: 0.6,   # Moderate - reduce risk
-            4: 0.4,
-            3: 0.3,
-            2: 0.2,
-            1: 0.1    # Most risky - minimal position
-        }.get(safety_score, 0.5)
+            10: 1.1,  # Safest - slightly more risk (max 1.1%)
+            9: 1.0,   # High safety - normal risk (1.0%)
+            8: 0.9,   # Good safety - slight reduction
+            7: 0.7,   # Medium safety - moderate reduction
+            6: 0.5,   # Lower safety - significant reduction
+            5: 0.4,   # Moderate risk - conservative
+            4: 0.3,   # Higher risk - very conservative
+            3: 0.2,   # High risk - minimal
+            2: 0.1,   # Very high risk - tiny position
+            1: 0.05   # Extremely risky - micro position
+        }.get(safety_score, 0.3)
         
         adjusted_risk = base_risk_per_trade * risk_multiplier
         
@@ -241,24 +246,44 @@ class PositionSizer:
         price_diff = abs(entry_price - stop_loss)
         position_value = risk_amount / (price_diff / entry_price)
         
-        # Leverage recommendation based on safety
+        # Conservative leverage recommendation based on safety
         if safety_score >= 8:
-            max_leverage = min(10, int(15 * risk_multiplier))
+            max_leverage = min(8, int(10 * risk_multiplier))  # Reduced max leverage
         elif safety_score >= 6:
-            max_leverage = min(7, int(10 * risk_multiplier))
-        elif safety_score >= 4:
             max_leverage = min(5, int(7 * risk_multiplier))
-        else:
+        elif safety_score >= 4:
             max_leverage = min(3, int(5 * risk_multiplier))
+        else:
+            max_leverage = min(2, int(3 * risk_multiplier))
         
         # Ensure minimum leverage of 1
         recommended_leverage = max(1, max_leverage)
         
-        # Position size with leverage
-        position_size_usdt = min(position_value / recommended_leverage, self.account_balance * 0.5)
+        # Position size with conservative limits
+        position_size_usdt = min(
+            position_value / recommended_leverage, 
+            self.account_balance * self.max_exposure_per_trade  # Max 25% exposure
+        )
         position_size_percent = (position_size_usdt / self.account_balance) * 100
         
+        # Additional safety checks
+        if position_size_percent > self.max_exposure_per_trade * 100:
+            position_size_percent = self.max_exposure_per_trade * 100
+            position_size_usdt = self.account_balance * self.max_exposure_per_trade
+        
         return position_size_usdt, recommended_leverage, adjusted_risk, position_size_percent
+    
+    def check_circuit_breaker(self, daily_pnl: float, consecutive_losses: int) -> bool:
+        """Circuit breaker to stop trading on bad days."""
+        daily_loss_pct = abs(daily_pnl) / self.account_balance
+        
+        if daily_loss_pct >= self.daily_loss_limit:
+            return True  # Stop trading - daily loss limit reached
+        
+        if consecutive_losses >= self.max_consecutive_losses:
+            return True  # Stop trading - too many consecutive losses
+        
+        return False
 
 
 class TradingSignalGenerator:
