@@ -127,17 +127,16 @@ class PortfolioRiskManager:
         if correlation_issue:
             return False, correlation_issue
             
-        # 5. Check leverage limits
+        # 5. Check portfolio exposure limits (notional / balance ratio)
         current_notional = sum(pos.position_size_usdt for pos in self.active_positions)
         total_notional_after = current_notional + position_size_usdt
         
-        # Weighted average leverage calculation
-        current_leverage_weighted = sum(pos.position_size_usdt * pos.leverage for pos in self.active_positions)
-        new_leverage_weighted = current_leverage_weighted + (position_size_usdt * leverage)
-        avg_leverage_after = new_leverage_weighted / total_notional_after if total_notional_after > 0 else 0
+        # Calculate portfolio exposure ratio (not sum of leverages)
+        portfolio_exposure_ratio = total_notional_after / portfolio_balance if portfolio_balance > 0 else 0
+        max_exposure_ratio = 10.0  # Max 10x total exposure (institutional limit)
         
-        if avg_leverage_after > self.max_leverage_portfolio:
-            return False, f"Portfolio leverage too high: {avg_leverage_after:.1f}x > {self.max_leverage_portfolio}x limit"
+        if portfolio_exposure_ratio > max_exposure_ratio:
+            return False, f"Portfolio exposure too high: {portfolio_exposure_ratio:.1f}x > {max_exposure_ratio}x limit"
             
         # 6. Safety score minimum for portfolio positions
         if len(self.active_positions) >= 2 and safety_score < 7:
@@ -208,11 +207,9 @@ class PortfolioRiskManager:
             ]
             if cluster_positions:
                 cluster_risk = sum(pos.risk_amount for pos in cluster_positions)
-                max_cluster_risk = max(max_cluster_risk, cluster_risk)
-                
-        # Weighted average leverage
-        leverage_weighted = sum(pos.position_size_usdt * pos.leverage for pos in self.active_positions)
-        avg_leverage = leverage_weighted / total_notional if total_notional > 0 else 0
+        # Portfolio exposure ratio (institutional metric)
+        total_notional = sum(pos.position_size_usdt for pos in self.active_positions)
+        portfolio_exposure_ratio = total_notional / portfolio_balance if portfolio_balance > 0 else 0
         
         return PortfolioRisk(
             total_risk_amount=total_risk,
@@ -220,7 +217,7 @@ class PortfolioRiskManager:
             risk_percentage=risk_percentage,
             max_correlated_risk=max_cluster_risk,
             position_count=len(self.active_positions),
-            leverage_weighted_avg=avg_leverage
+            leverage_weighted_avg=portfolio_exposure_ratio  # This is the real institutional metric
         )
         
     def get_position_limits_info(self, portfolio_balance: float) -> Dict:

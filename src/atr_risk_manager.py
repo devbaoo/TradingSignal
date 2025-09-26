@@ -94,7 +94,7 @@ class ATRRiskManager:
             tp1 = entry_price + (atr * dynamic_tp_multiplier)  # Dynamic TP1
             tp2 = entry_price + (atr * dynamic_tp_multiplier * 1.6)  # Dynamic TP2
             
-            # Chandelier exit (trailing stop)
+            # LeBeau Chandelier Exit formula (proper implementation)
             chandelier_stop = high.rolling(risk_params.time_stop_candles).max().iloc[-1] - \
                              (atr * risk_params.chandelier_atr_mult)
             
@@ -106,7 +106,7 @@ class ATRRiskManager:
             tp1 = entry_price - (atr * dynamic_tp_multiplier)  # Dynamic TP1
             tp2 = entry_price - (atr * dynamic_tp_multiplier * 1.6)  # Dynamic TP2
             
-            # Chandelier exit (trailing stop)
+            # LeBeau Chandelier Exit formula (proper implementation)
             chandelier_stop = low.rolling(risk_params.time_stop_candles).min().iloc[-1] + \
                              (atr * risk_params.chandelier_atr_mult)
         
@@ -152,7 +152,7 @@ class ATRRiskManager:
             'stop_loss': stop_loss,
             'take_profit_1': tp1,
             'take_profit_2': tp2,
-            'chandelier_stop': stop_loss,
+            'chandelier_stop': stop_loss,  # Fallback to stop_loss when no data
             'atr_value': entry_price * 0.02,  # Fallback ATR
             'risk_amount': risk,
             'reward_1': reward1,

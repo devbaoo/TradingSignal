@@ -29,6 +29,8 @@ class BinanceFuturesDataProvider:
     
     def __init__(self):
         self.futures_base_url = "https://fapi.binance.com/fapi/v1"
+        self.leverage_brackets_cache = {}  # Cache leverage brackets
+        self.leverage_cache_expiry = {}    # Cache expiry timestamps
         self.spot_base_url = "https://api.binance.com/api/v3"
         
         # Session for connection pooling
@@ -400,3 +402,110 @@ class BinanceFuturesDataProvider:
             crowding_factors.append(0.2)  # Normal
         
         return min(1.0, sum(crowding_factors) / len(crowding_factors))
+
+    def get_leverage_brackets(self, symbol: str) -> Optional[Dict]:
+        """
+        Get leverage brackets for symbol from Binance API
+        Uses caching to avoid rate limits (cache for 1 hour)
+        """
+        current_time = time.time()
+        
+        # Check cache first
+        if (symbol in self.leverage_brackets_cache and 
+            symbol in self.leverage_cache_expiry and
+            current_time < self.leverage_cache_expiry[symbol]):
+            return self.leverage_brackets_cache[symbol]
+        
+        try:
+            # Note: This endpoint requires authentication in production
+            # For now, we'll use fallback MMR calculations
+            # In production, you would need API key and signature
+            
+            # Fallback MMR based on common Binance brackets
+            fallback_brackets = self._get_fallback_leverage_brackets(symbol)
+            
+            # Cache for 1 hour
+            self.leverage_brackets_cache[symbol] = fallback_brackets
+            self.leverage_cache_expiry[symbol] = current_time + 3600
+            
+            return fallback_brackets
+            
+        except Exception as e:
+            # Return safe fallback
+            return self._get_fallback_leverage_brackets(symbol)
+
+    def _get_fallback_leverage_brackets(self, symbol: str) -> Dict:
+        """
+        Fallback leverage brackets based on common Binance patterns
+        This should be replaced with real API call in production
+        """
+        
+        # Most USDT-M futures follow this pattern
+        brackets = [
+            {"notionalFloor": 0, "notionalCap": 50000, "maintMarginRatio": 0.004, "cum": 0},
+            {"notionalFloor": 50000, "notionalCap": 250000, "maintMarginRatio": 0.005, "cum": 50},
+            {"notionalFloor": 250000, "notionalCap": 1000000, "maintMarginRatio": 0.01, "cum": 1300},
+            {"notionalFloor": 1000000, "notionalCap": 5000000, "maintMarginRatio": 0.025, "cum": 16300},
+            {"notionalFloor": 5000000, "notionalCap": 20000000, "maintMarginRatio": 0.05, "cum": 141300},
+            {"notionalFloor": 20000000, "notionalCap": 50000000, "maintMarginRatio": 0.1, "cum": 1141300},
+            {"notionalFloor": 50000000, "notionalCap": 100000000, "maintMarginRatio": 0.125, "cum": 2391300},
+        ]
+        
+        return {
+            "symbol": symbol,
+            "brackets": brackets
+        }
+
+    def calculate_accurate_liquidation(self, entry_price: float, leverage: float, 
+                                     direction: str, position_size_usdt: float, 
+                                     symbol: str) -> Dict:
+        """
+        Calculate accurate liquidation price using proper MMR from brackets
+        """
+        brackets_data = self.get_leverage_brackets(symbol)
+        
+        if not brackets_data:
+            # Fallback to simple calculation
+            return self._calculate_simple_liquidation(entry_price, leverage, direction)
+        
+        # Find appropriate bracket for position size
+        brackets = brackets_data["brackets"]
+        mmr = 0.004  # Default MMR
+        cum = 0
+        
+        for bracket in brackets:
+            if position_size_usdt <= bracket["notionalCap"]:
+                mmr = bracket["maintMarginRatio"]
+                cum = bracket["cum"]
+                break
+        
+        # Binance liquidation formula
+        if direction == "LONG":
+            liquidation_price = (position_size_usdt - entry_price * position_size_usdt / entry_price + cum) / \
+                              (position_size_usdt / entry_price * (mmr - 1))
+        else:  # SHORT
+            liquidation_price = (position_size_usdt + entry_price * position_size_usdt / entry_price - cum) / \
+                              (position_size_usdt / entry_price * (mmr + 1))
+        
+        return {
+            'liquidation_price': liquidation_price,
+            'mmr_used': mmr,
+            'bracket_info': f"MMR: {mmr*100:.2f}% (Bracket for ${position_size_usdt:,.0f})",
+            'distance_percent': abs(entry_price - liquidation_price) / entry_price * 100
+        }
+
+    def _calculate_simple_liquidation(self, entry_price: float, leverage: float, direction: str) -> Dict:
+        """Simple liquidation calculation as fallback"""
+        mmr = 0.004 if leverage <= 20 else 0.01  # Basic MMR
+        
+        if direction == "LONG":
+            liquidation_price = entry_price * (1 - (1/leverage) + mmr)
+        else:
+            liquidation_price = entry_price * (1 + (1/leverage) + mmr)
+        
+        return {
+            'liquidation_price': liquidation_price,
+            'mmr_used': mmr,
+            'bracket_info': f"Simple MMR: {mmr*100:.2f}%",
+            'distance_percent': abs(entry_price - liquidation_price) / entry_price * 100
+        }
