@@ -54,21 +54,25 @@
 ### ✅ **Additional v4.2.1 Enhancements**
 
 7. **Auto-Scan Empty Results** ✅ FIXED
+
    - **Issue**: Auto-scan forced to return top 5 signals even when no valid signals exist
    - **Fix**: Allow auto-scan to return 0 signals when quality standards aren't met
    - **Impact**: More honest signal quality, no forced low-quality recommendations
 
-8. **Single Safety Score Method** ✅ FIXED  
+8. **Single Safety Score Method** ✅ FIXED
+
    - **Issue**: Multiple safety score calculations in different parts of code
    - **Fix**: Unified to use only `calculate_enhanced_safety_score()` method
    - **Impact**: Consistent scoring logic, easier maintenance
 
 9. **Session State Safe Initialization** ✅ FIXED
+
    - **Issue**: Portfolio initialization using if/else patterns that could fail
    - **Fix**: Use `st.session_state.setdefault()` for atomic safe initialization
    - **Impact**: More reliable session state management
 
 10. **Enhanced Position Tracking** ✅ FIXED
+
     - **Issue**: Position records missing required fields (risk_percent, margin, notional)
     - **Fix**: Calculate and store all required fields when adding positions
     - **Impact**: Complete position tracking for risk management
@@ -108,7 +112,7 @@
        margin_required = signal.get('margin_required', position_size_usdt / signal['leverage'])
        risk_amount = signal['position_size_usdt'] * abs(signal['entry_price'] - signal['stop_loss']) / signal['entry_price']
        risk_percent = (risk_amount / balance) * 100 if balance > 0 else 0
-       
+
        # Create position dict with all required fields
        position_dict = {
            'symbol': signal['symbol'],
@@ -119,7 +123,7 @@
            'stop_loss': signal['stop_loss'],
            'take_profit_1': signal['take_profit_1'],
            'risk_amount': risk_amount,              # v4.2.1: Required
-           'risk_percent': risk_percent,            # v4.2.1: Required  
+           'risk_percent': risk_percent,            # v4.2.1: Required
            'margin_required': margin_required,      # v4.2.1: Required
            'notional_value': position_size_usdt,    # v4.2.1: Required
            'timestamp': time.time(),
@@ -139,8 +143,8 @@
    # v4.2.1: Safe session state initialization
    st.session_state.setdefault('portfolio_positions', [])
    st.session_state.setdefault('portfolio_value', 10000.0)
-   
-   # Calculate portfolio metrics from session state 
+
+   # Calculate portfolio metrics from session state
    session_positions = st.session_state.setdefault('portfolio_positions', [])
    position_count = len(session_positions)
    max_positions = gui.portfolio_risk_manager.max_positions  # v4.2.1: Single source of truth
