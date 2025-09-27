@@ -296,6 +296,6 @@ if regime == "SIDEWAYS" and volatility == "HIGH" and strategy == "momentum":
 
 ---
 
-**Last Updated:** September 26, 2025  
-**Version:** 1.6.0 (Production Ready)  
+**Last Updated:** September 27, 2025  
+**Version:** 4.2.1 (Critical Fixes Applied)  
 **App URL:** http://localhost:8502

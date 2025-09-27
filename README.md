@@ -1,15 +1,17 @@
-# 📈 **TradingInsight v4.2** - Professional Futures Signal Generator
+# 📈 **TradingInsight v4.2.1** - Professional Futures Signal Generator
 
-**Institutional-grade crypto futures trading signals với session state portfolio management, real-time risk monitoring, và compliance-safe architecture.**
+**Institutional-grade crypto futures trading signals với unified constants, safe regime access, và compliance-synchronized architecture.**
 
-### ⚡ **Version 4.2 Highlights**
+### ⚡ **Version 4.2.1 Critical Fixes Applied (September 27, 2025)**
 
-- **🏦 Session State Portfolio Management**: Persistent portfolio tracking across app restarts
-- **🎯 Production Clean Interface**: Zero debug code, institutional styling
-- **📊 Enhanced Risk Controls**: 5% portfolio limit, 1% per position, correlation analysis
-- **⚡ Performance Optimized**: 75% faster processing, intelligent caching
-- **🛡️ Error Resilience**: Silent error handling, circuit breaker protection
-- **📈 Professional Signal Quality**: Calibrated safety scoring, guaranteed minimum 50% ROI targets
+- **📐 Unified Constants**: MIN_RR = 2.0 standardized across all modules
+- **🔒 Safe Regime Access**: Bulletproof dict/object/None handling
+- **🧮 Single Safety Scorer**: Only calculate_enhanced_safety_score() used
+- **🎯 Smart Auto-scan**: Returns 0-5 signals based on quality bars
+- **📊 MMR Mode Flag**: Liquidation calculations marked as 'approx'
+- **📈 Exposure UI**: "Exposure" labels, portfolio_risk_manager.max_positions source
+- **🛡️ Formatter Hardening**: Safe .get() with fallbacks for all fields
+- **� Session State Safety**: setdefault pattern, complete position fields
 
 ---
 
@@ -27,6 +29,7 @@
 ### ⚙️ **How to Use Portfolio Management**
 
 **Adding Positions (Method 1 - Direct from Signals):**
+
 1. Generate signals using main interface
 2. Review signal quality và R/R ratios
 3. Click "**Add to Portfolio**" next to preferred signals
@@ -34,18 +37,21 @@
 5. Monitor real-time P&L in sidebar "Portfolio Management"
 
 **Adding Positions (Method 2 - Copy Setup):**
+
 1. Click "**Copy Setup**" to get signal parameters
 2. Example output: `BTCUSDT | Entry: 42150.5 | Stop: 40890.2 | R/R: 1.85`
 3. Use parameters for manual trade execution
 4. Optionally add to portfolio tracking for monitoring
 
 **Manual Position Entry:**
+
 1. Use sidebar "Portfolio Management" section
 2. Enter symbol, entry price, position type (Long/Short)
 3. Set stop loss và take profit levels
 4. Position automatically added với risk calculations
 
 **Portfolio Monitoring:**
+
 - **Portfolio Value**: Real-time total value tracking
 - **Unrealized P&L**: Mark-to-market profit/loss
 - **Position Count**: Active positions (max 3)
@@ -165,6 +171,7 @@ if 'portfolio_value' not in st.session_state:
 ### **Adding Positions to Portfolio**
 
 **Method 1: Direct Signal Addition (Recommended)**
+
 1. Generate signals using main interface or Auto-Scan
 2. Review signal quality (safety score, R/R ratio, ROI projection)
 3. Click "**➕ Add to Portfolio**" next to preferred signal
@@ -175,13 +182,15 @@ if 'portfolio_value' not in st.session_state:
    - Updates portfolio metrics in real-time
 
 **Method 2: Copy Signal Setup**
+
 1. Click "**📋 Copy Setup**" to get signal parameters
 2. Example output: `BTCUSDT | Entry: 42150.5 | Stop: 40890.2 | Target: 44500.0 | R/R: 1.85`
 3. Use parameters for manual execution on Binance
 4. Optionally manually add to portfolio for tracking
 
 **Method 3: Manual Position Entry**
-1. Use sidebar "Portfolio Management" section  
+
+1. Use sidebar "Portfolio Management" section
 2. Enter symbol, entry price, position type (Long/Short)
 3. Set custom stop loss và take profit levels
 4. Position added với automatic risk calculations
@@ -189,6 +198,7 @@ if 'portfolio_value' not in st.session_state:
 ### **Portfolio Monitoring Features**
 
 **Real-Time Metrics:**
+
 - **Portfolio Value**: Current total account value
 - **Risk Used**: Percentage of max portfolio risk (5% limit)
 - **Positions**: Active position count (maximum 3 concurrent)
@@ -196,6 +206,7 @@ if 'portfolio_value' not in st.session_state:
 - **Average Leverage**: Portfolio-weighted leverage exposure
 
 **Risk Management Controls:**
+
 - **Maximum Portfolio Risk**: 5% of total account balance
 - **Maximum Per Position**: 1% risk per individual trade
 - **Correlation Limits**: Maximum 3 correlated cryptocurrency positions
@@ -205,12 +216,14 @@ if 'portfolio_value' not in st.session_state:
 ### **Position Management Actions**
 
 **Individual Position Controls:**
+
 - **Update Price**: Refresh current market price for P&L calculation
 - **Modify Stops**: Adjust stop loss levels (trailing stops recommended)
 - **Close Position**: Exit position at current market price
 - **Scale Out**: Partial position reduction with profit taking
 
 **Portfolio-Level Actions:**
+
 - **Close All Positions**: Emergency portfolio exit
 - **Update All Prices**: Refresh entire portfolio với current market data
 - **Risk Summary**: Complete portfolio risk analysis
@@ -219,18 +232,21 @@ if 'portfolio_value' not in st.session_state:
 ### **Professional Usage Tips**
 
 **Signal Quality Assessment:**
+
 - **Scores 8-10**: Institutional grade (rare, high probability)
 - **Scores 6-7**: Professional quality (good risk/reward)
 - **Scores 4-5**: Standard quality (acceptable with proper risk management)
 - **Scores 1-3**: Avoid (poor risk/reward profile)
 
 **Position Sizing Strategy:**
+
 - System uses **1% base risk** per position (conservative institutional approach)
 - Higher safety scores receive slightly larger allocations
 - Never risk more than 1% of account on single position
 - Portfolio correlation analysis prevents over-concentration
 
 **Risk Management Best Practices:**
+
 - Monitor "Risk Used" percentage - stay well below 5% limit
 - Diversify across different cryptocurrency sectors
 - Use trailing stops when positions move in your favor
@@ -274,18 +290,21 @@ TradingInsight/
 ### **Performance Optimizations (Version 4.2)**
 
 **Data Processing:**
+
 - **Batch Loading**: 80 symbols in 15-20 seconds (vs 3-5 minutes sequential)
 - **Intelligent Caching**: 3-minute TTL với session state persistence
 - **Memory Efficiency**: 50% reduction với float32 và optimized DataFrames
 - **Parallel Execution**: ThreadPoolExecutor với 4 workers for rate limit compliance
 
 **Auto-Scan Enhancement:**
+
 - **Guaranteed Results**: Always returns top 5 signals (no empty results)
 - **Quality Filtering**: Market condition adaptive thresholds
 - **Circuit Breaker Integration**: Automatic suspension với loss limits
 - **Performance**: Complete scan in ~30 seconds (75% faster than v3.0)
 
 **Production Readiness:**
+
 - **Zero Debug Output**: Complete removal of development artifacts
 - **Error Resilience**: Silent error handling với graceful degradation
 - **Professional UI**: Clean interface với institutional metrics
@@ -316,6 +335,7 @@ FTM/USDT, ALGO/USDT, VET/USDT, ICP/USDT, NEAR/USDT
 **Institutional-Grade Scoring Components (Max 10 points):**
 
 **Core Components:**
+
 - **Confidence** (max 3): ≥0.9=3pts, ≥0.8=2pts, ≥0.7=1pt, <0.7=0pts
 - **Regime Strength** (max 3): ≥0.9=3pts, ≥0.8=2pts, ≥0.7=1pt, <0.7=0pts
 - **Risk/Reward** (max 2): ≥3.0=2pts, ≥2.5=1pt, <2.5=0pts
@@ -323,16 +343,19 @@ FTM/USDT, ALGO/USDT, VET/USDT, ICP/USDT, NEAR/USDT
 - **Volume Confirmation** (max 1): +1pt if HIGH volume profile
 
 **Institutional Penalties:**
+
 - **Extreme RSI** (>75 or <25): -1pt (risky momentum)
 - **High Volatility** (>10% daily ATR): -1pt (increased risk)
 - **Poor Liquidity** (<$10M daily volume): -1pt (execution risk)
 - **Extreme Funding Rate** (>0.1% or <-0.1%): -1pt (market stress)
 
 **Exceptional Bonuses (for institutional grade 9-10):**
+
 - **Perfect Conditions**: +1pt (can achieve score 10) - EXTREMELY RARE
 - **Near Perfect**: +0.5pt (can achieve score 9) - RARE
 
 **Score Interpretation (Calibrated với Backtest Results):**
+
 - **Score 10**: Perfect institutional (95%+ historical win rate) - 0.2% of all signals
 - **Score 9**: Exceptional institutional (90-95% win rate) - 1.8% of all signals
 - **Score 8**: High quality professional (80-85% win rate) - 8.5% of all signals
@@ -343,6 +366,7 @@ FTM/USDT, ALGO/USDT, VET/USDT, ICP/USDT, NEAR/USDT
 ### 🏦 **Portfolio Risk Management**
 
 **Professional Limits:**
+
 - **Max Portfolio Risk**: 5.0% of account balance
 - **Max Per Position**: 1.0% risk per individual trade
 - **Max Correlated**: 3.0% risk in correlated positions
@@ -350,6 +374,7 @@ FTM/USDT, ALGO/USDT, VET/USDT, ICP/USDT, NEAR/USDT
 - **Max Average Leverage**: 50x across portfolio
 
 **Portfolio Controls:**
+
 - **Real-Time Monitoring**: Live risk utilization tracking
 - **Visual Indicators**: 🟢 Safe, 🟡 Warning, 🔴 Danger levels
 - **Automatic Blocking**: Prevents new positions when limits exceeded
@@ -397,15 +422,17 @@ AGGRESSIVE: 2.0x stop, 5.0x TP → 5.0% price move × 20x = 100% ROI
 
 ## 📝 **Trading Disclaimer**
 
-⚠️ **IMPORTANT LEGAL NOTICE**: This software is for educational và informational purposes only. 
+⚠️ **IMPORTANT LEGAL NOTICE**: This software is for educational và informational purposes only.
 
 **Risk Warnings:**
+
 - **Cryptocurrency futures trading involves substantial risk** và may result in partial or complete loss of funds
 - **Past performance does not guarantee future results** - all signals are probabilistic, not deterministic
 - **High leverage magnifies both profits và losses** - never trade with funds you cannot afford to lose
 - **No financial advice** - this tool provides technical analysis, not investment recommendations
 
 **User Responsibilities:**
+
 - Understand all risks before trading
 - Never exceed your risk tolerance
 - Perform independent research và analysis
@@ -413,6 +440,7 @@ AGGRESSIVE: 2.0x stop, 5.0x TP → 5.0% price move × 20x = 100% ROI
 - Use proper risk management at all times
 
 **System Limitations:**
+
 - Signals are based on historical data và may not predict future market conditions
 - Technical failures, network issues, or market disruptions may affect performance
 - No guarantee of profitability or accuracy
@@ -422,17 +450,20 @@ AGGRESSIVE: 2.0x stop, 5.0x TP → 5.0% price move × 20x = 100% ROI
 ## 📚 **Additional Resources**
 
 ### **Documentation**
+
 - `SIGNAL_GENERATION_LOGIC.md` - Complete algorithm documentation
 - `start_gui.sh` - Quick launch script for macOS/Linux
 - Session state architecture documentation
 
 ### **Support**
+
 - Review code và logic in source files
 - Test với small positions before scaling
 - Monitor portfolio risk metrics continuously
 - Practice good risk management principles
 
 ### **Development**
+
 - Python 3.13.7 tested environment
 - Streamlit-based professional interface
 - Real-time Binance API integration
@@ -440,6 +471,6 @@ AGGRESSIVE: 2.0x stop, 5.0x TP → 5.0% price move × 20x = 100% ROI
 
 ---
 
-**Last Updated**: Version 4.2 - Production Ready với Session State Portfolio Management  
+**Last Updated**: September 27, 2025 – Version 4.2.1 - Critical Fixes Applied  
 **Developer**: Professional Trading Signal System  
-**License**: For educational and research purposes only  
+**License**: For educational and research purposes only

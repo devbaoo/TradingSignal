@@ -1,8 +1,84 @@
 # 🎯 Signal Generation Logic - Detailed Algorithm Documentation
 
-**Version 4.2** - Portfolio Management Enhanced với Session State Architecture
+**Version 4.2.1** - Critical Fixes Applied (September 27, 2025)
 
-## 🚀 **Latest Portfolio Management Improvements (September 27, 2025)**
+## 🔧 **Critical Bug Fixes Applied (Version 4.2.1)**
+
+### ✅ **Six Blocking Issues Resolved**
+
+1. **R/R Minimum Threshold Inconsistency** ✅ FIXED
+
+   - **Issue**: Documentation stated Natural R/R ≥ 2.0, but code filtered < 1.5
+   - **Fix**: Updated all risk_reward_ratio checks to use consistent MIN_RR = 2.0 threshold
+   - **Impact**: Ensures signal quality matches documentation standards
+
+2. **Regime Object vs Dict Mismatch** ✅ FIXED
+
+   - **Issue**: Code accessed `regime.regime_strength` but `detect_market_regime` returns dict
+   - **Fix**: Added proper type handling: `regime.get('strength', 0.5)` with fallback for objects
+   - **Impact**: Eliminates AttributeError crashes in regime analysis
+
+3. **Chandelier Stop Formula Correction** ✅ FIXED
+
+   - **Issue**: Manual calculation used simple "entry ± ATR×multiplier" instead of proper LeBeau formula
+   - **Fix**: Implemented correct LeBeau Chandelier Exit:
+     ```python
+     def chandelier_exit(df, n=22, k=3.0, side="LONG"):
+         atr = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=n)
+         if side == "LONG":
+             hh = df['high'].rolling(n).max()
+             return float(hh.iloc[-1] - k * atr.iloc[-1])
+         else:
+             ll = df['low'].rolling(n).min()
+             return float(ll.iloc[-1] + k * atr.iloc[-1])
+     ```
+   - **Impact**: Proper trailing stops using highest high/lowest low with ATR
+
+4. **Portfolio Exposure Label Fix** ✅ FIXED
+
+   - **Issue**: "Avg Leverage" was actually calculating gross exposure multiple
+   - **Fix**: Renamed to "Exposure" and clarified calculation as portfolio exposure multiple
+   - **Impact**: Accurate labeling prevents confusion about leverage vs exposure
+
+5. **Max Positions Consistency** ✅ FIXED
+
+   - **Issue**: UI used hardcoded `max_positions = 3`, PortfolioRiskManager had same value
+   - **Fix**: UI now uses `gui.portfolio_risk_manager.max_positions` for single source of truth
+   - **Impact**: Centralized configuration, easier to modify limits
+
+6. **MMR Approximation Flag** ✅ FIXED
+   - **Issue**: Liquidation calculations used simplified model without indicating approximation
+   - **Fix**: Added `mmr_mode: 'approx'` flag and updated function comments
+   - **Impact**: Clear indication that liquidation prices are approximate (not bracket-based)
+
+### ✅ **Additional v4.2.1 Enhancements**
+
+7. **Auto-Scan Empty Results** ✅ FIXED
+   - **Issue**: Auto-scan forced to return top 5 signals even when no valid signals exist
+   - **Fix**: Allow auto-scan to return 0 signals when quality standards aren't met
+   - **Impact**: More honest signal quality, no forced low-quality recommendations
+
+8. **Single Safety Score Method** ✅ FIXED  
+   - **Issue**: Multiple safety score calculations in different parts of code
+   - **Fix**: Unified to use only `calculate_enhanced_safety_score()` method
+   - **Impact**: Consistent scoring logic, easier maintenance
+
+9. **Session State Safe Initialization** ✅ FIXED
+   - **Issue**: Portfolio initialization using if/else patterns that could fail
+   - **Fix**: Use `st.session_state.setdefault()` for atomic safe initialization
+   - **Impact**: More reliable session state management
+
+10. **Enhanced Position Tracking** ✅ FIXED
+    - **Issue**: Position records missing required fields (risk_percent, margin, notional)
+    - **Fix**: Calculate and store all required fields when adding positions
+    - **Impact**: Complete position tracking for risk management
+
+11. **Cluster Management Stubs** ✅ FIXED
+    - **Issue**: Code references to cluster functions that didn't exist
+    - **Fix**: Added `get_symbol_cluster()` and `check_cluster_limits()` stubs
+    - **Impact**: Code runs without errors, ready for full cluster implementation
+
+## 🚀 **Portfolio Management Architecture (Version 4.2)**
 
 ### ✅ **Session State Portfolio Architecture**
 
@@ -13,58 +89,74 @@
 #### **New Portfolio Management Logic:**
 
 1. **Session State Primary Storage**:
+
    - All portfolio positions stored in `st.session_state.portfolio_positions`
    - Persistent across Streamlit reruns và page refreshes
    - Direct calculation of portfolio metrics from session data
 
-2. **Simplified Add Position Flow**:
+2. **Simplified Add Position Flow** (v4.2.1 Enhanced):
+
    ```python
    def add_position_to_portfolio(self, signal: dict, balance: float):
-       """Add position directly to session state - production clean"""        
+       """Add position directly to session state with all required fields"""
        if signal.get('portfolio_blocked') or signal.get('liquidation_blocked'):
            st.warning("⚠️ Position blocked from being added to portfolio")
            return False
-           
-       # Create position dict 
+
+       # v4.2.1: Calculate all required fields for position tracking
+       position_size_usdt = signal['position_size_usdt']
+       margin_required = signal.get('margin_required', position_size_usdt / signal['leverage'])
+       risk_amount = signal['position_size_usdt'] * abs(signal['entry_price'] - signal['stop_loss']) / signal['entry_price']
+       risk_percent = (risk_amount / balance) * 100 if balance > 0 else 0
+       
+       # Create position dict with all required fields
        position_dict = {
            'symbol': signal['symbol'],
            'direction': signal['direction'],
            'entry_price': signal['entry_price'],
-           'position_size_usdt': signal['position_size_usdt'],
+           'position_size_usdt': position_size_usdt,
            'leverage': signal['leverage'],
            'stop_loss': signal['stop_loss'],
            'take_profit_1': signal['take_profit_1'],
-           'risk_amount': signal['position_size_usdt'] * abs(signal['entry_price'] - signal['stop_loss']) / signal['entry_price'],
+           'risk_amount': risk_amount,              # v4.2.1: Required
+           'risk_percent': risk_percent,            # v4.2.1: Required  
+           'margin_required': margin_required,      # v4.2.1: Required
+           'notional_value': position_size_usdt,    # v4.2.1: Required
            'timestamp': time.time(),
            'timeframe': signal['timeframe'],
            'safety_score': signal['safety_score']
        }
-       
+
        # Add to session state
        st.session_state.portfolio_positions.append(position_dict)
        st.success(f"✅ Position added! Total: {len(st.session_state.portfolio_positions)}")
        return True
    ```
 
-3. **Real-Time Portfolio Metrics**:
+3. **Real-Time Portfolio Metrics** (v4.2.1 Safe Initialization):
+
    ```python
-   # Calculate portfolio metrics from session state
-   session_positions = st.session_state.portfolio_positions if 'portfolio_positions' in st.session_state else []
-   position_count = len(session_positions)
-   max_positions = 3
+   # v4.2.1: Safe session state initialization
+   st.session_state.setdefault('portfolio_positions', [])
+   st.session_state.setdefault('portfolio_value', 10000.0)
    
+   # Calculate portfolio metrics from session state 
+   session_positions = st.session_state.setdefault('portfolio_positions', [])
+   position_count = len(session_positions)
+   max_positions = gui.portfolio_risk_manager.max_positions  # v4.2.1: Single source of truth
+
    # Calculate risk from session positions
    total_risk = sum(pos.get('risk_amount', 0) for pos in session_positions) if session_positions else 0
    risk_percentage = total_risk / balance if balance > 0 else 0
-   
-   # Portfolio status display
+
+   # Portfolio status display (v4.2.1: "Exposure" instead of "Avg Leverage")
    if position_count > 0:
        total_notional = sum(pos.get('position_size_usdt', 0) for pos in session_positions)
-       avg_leverage = total_notional / balance if balance > 0 else 0
+       exposure_multiple = total_notional / balance if balance > 0 else 0  # v4.2.1: Renamed
        st.sidebar.success(f"""
    **📈 Active Portfolio:**
    • Total Risk: ${total_risk:.0f} ({risk_percentage:.1%})
-   • Avg Leverage: {avg_leverage:.1f}x
+   • Exposure: {exposure_multiple:.1f}x
    • Positions: {position_count}
        """)
    else:
@@ -72,22 +164,23 @@
    ```
 
 4. **Portfolio Management UI Controls**:
+
    ```python
    def render_portfolio_management_controls(self, signal: dict, symbol: str, balance: float):
        """Render portfolio management UI controls for a signal"""
        st.markdown("---")
        col1, col2, col3 = st.columns([2, 1, 1])
-       
+
        with col1:
            st.markdown("### 🏦 Portfolio Management")
-           
+
        with col2:
            # Check if position already exists
            position_exists = any(
-               pos.get('symbol') == symbol and pos.get('direction') == signal['direction'] 
+               pos.get('symbol') == symbol and pos.get('direction') == signal['direction']
                for pos in st.session_state.portfolio_positions
            )
-           
+
            if not position_exists and not signal.get('portfolio_blocked') and not signal.get('liquidation_blocked'):
                if st.button(f"➕ Add to Portfolio", key=f"add_portfolio_{symbol}_{signal['direction']}", type="primary"):
                    self.add_position_to_portfolio(signal, balance)
@@ -95,7 +188,7 @@
                st.info("📈 Already in Portfolio")
            else:
                st.warning("❌ Cannot add (blocked)")
-               
+
        with col3:
            if st.button(f"📋 Copy Setup", key=f"copy_setup_{symbol}_{signal['direction']}"):
                st.success("📋 Setup copied!")
