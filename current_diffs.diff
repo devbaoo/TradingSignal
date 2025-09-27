@@ -1,0 +1,796 @@
+diff --git a/src/portfolio_risk_manager.py b/src/portfolio_risk_manager.py
+index cfdaba0..7dd14d0 100644
+--- a/src/portfolio_risk_manager.py
++++ b/src/portfolio_risk_manager.py
+@@ -23,6 +23,8 @@ class Position:
+     timestamp: float
+     timeframe: str
+     safety_score: int
++    analytics_trade_id: Optional[int] = None
++    status: str = "open"
+ 
+ @dataclass 
+ class PortfolioRisk:
+@@ -185,9 +187,12 @@ class PortfolioRiskManager:
+         """Add new position to portfolio tracking"""
+         self.active_positions.append(position)
+         
+-    def remove_position(self, symbol: str):
+-        """Remove position when closed"""
+-        self.active_positions = [pos for pos in self.active_positions if pos.symbol != symbol]
++    def remove_position(self, symbol: str, direction: str, timestamp: float):
++        """Remove a specific position when closed"""
++        self.active_positions = [
++            pos for pos in self.active_positions
++            if not (pos.symbol == symbol and pos.direction == direction and pos.timestamp == timestamp)
++        ]
+         
+     def get_portfolio_metrics(self, portfolio_balance: float) -> PortfolioRisk:
+         """Get current portfolio risk metrics"""
+@@ -252,4 +257,4 @@ class PortfolioRiskManager:
+         self.active_positions = [
+             pos for pos in self.active_positions 
+             if (current_time - pos.timestamp) < (max_age_hours * 3600)
+-        ]
+\ No newline at end of file
++        ]
+diff --git a/trading_gui.py b/trading_gui.py
+index 8dde22f..bfa48cd 100644
+--- a/trading_gui.py
++++ b/trading_gui.py
+@@ -6,6 +6,7 @@ import plotly.express as px
+ from plotly.subplots import make_subplots
+ import json
+ import os
++import re
+ from datetime import datetime, timedelta
+ import time
+ import random
+@@ -22,12 +23,208 @@ from src.atr_risk_manager import ATRRiskManager
+ from src.futures_data_provider import BinanceFuturesDataProvider
+ from src.professional_momentum import ProfessionalMomentumStrategy
+ from src.robust_backtester import RobustBacktester
+-from src.portfolio_risk_manager import PortfolioRiskManager, Position
++from src.portfolio_risk_manager import PortfolioRiskManager
+ from src.circuit_breaker import CircuitBreakerManager
+ 
+ # Import constants for v4.2.1 standardization
+ from constants import MIN_RR, get_regime_strength, safe_get_signal_field
+ 
++# Analytics Integration
++try:
++    from src.analytics_integration import (
++        analytics_integrator, 
++        track_generated_signal, 
++        show_analytics_summary_widget,
++        add_analytics_integration_to_main_gui
++    )
++    from src.trading_analytics import auth, trade_tracker, dashboard
++    ANALYTICS_AVAILABLE = True
++except ImportError:
++    ANALYTICS_AVAILABLE = False
++    print("⚠️ Analytics module not available - running in basic mode")
++
++def render_analytics_tab():
++    """Render analytics tab with real trading data"""
++    st.markdown("## 📊 Trading Analytics Dashboard")
++    
++    # Check if user is logged in to analytics
++    if not analytics_integrator.initialize_user_session():
++        st.warning("🔐 Please login to access your trading performance data.")
++        st.info("Use the credentials form on the main screen to sign in.")
++        return
++    
++    # Get current user info
++    user_info = st.session_state.get('analytics_user')
++    if not user_info:
++        st.error("Analytics session expired. Please re-login.")
++        return
++    
++    user_id = user_info['id']
++    
++    st.success(f"✅ Analytics Active: {user_info['username']} ({user_info['subscription_tier']})")
++    
++    # Date range selector
++    col1, col2 = st.columns(2)
++    with col1:
++        start_date = st.date_input("From", value=datetime.now().date() - timedelta(days=30))
++    with col2:
++        end_date = st.date_input("To", value=datetime.now().date())
++    
++    # Get trades data
++    trades_df = trade_tracker.get_user_trades(user_id, limit=1000)
++    
++    if trades_df.empty:
++        st.info("📊 No trading data found. Start generating signals to build your analytics.")
++        return
++    
++    # Filter by date range
++    trades_df['entry_date'] = pd.to_datetime(trades_df['entry_time']).dt.date
++    period_trades = trades_df[
++        (trades_df['entry_date'] >= start_date) & 
++        (trades_df['entry_date'] <= end_date)
++    ]
++    
++    if period_trades.empty:
++        st.warning("📅 No trades found in selected date range")
++        return
++    
++    # Key Performance Metrics
++    st.markdown("### 🎯 Performance Overview")
++    
++    col1, col2, col3, col4 = st.columns(4)
++    
++    total_trades = len(period_trades)
++    closed_trades = period_trades[period_trades['status'] == 'closed']
++    
++    with col1:
++        st.metric("Total Signals", total_trades)
++    
++    with col2:
++        open_positions = len(period_trades[period_trades['status'] == 'open'])
++        st.metric("Open Positions", open_positions)
++    
++    with col3:
++        if not closed_trades.empty:
++            winning_trades = len(closed_trades[closed_trades['pnl_usdt'] > 0])
++            win_rate = (winning_trades / len(closed_trades) * 100) if len(closed_trades) > 0 else 0
++            st.metric("Win Rate", f"{win_rate:.1f}%")
++        else:
++            st.metric("Win Rate", "0.0%")
++    
++    with col4:
++        if not closed_trades.empty:
++            total_pnl = closed_trades['pnl_usdt'].sum()
++            st.metric("Total P&L", f"${total_pnl:.2f}")
++        else:
++            st.metric("Total P&L", "$0.00")
++    
++    # Performance Charts
++    if not closed_trades.empty:
++        st.markdown("### 📈 Performance Charts")
++        
++        # Daily PnL
++        daily_pnl = closed_trades.groupby('entry_date')['pnl_usdt'].sum().reset_index()
++        daily_pnl['cumulative_pnl'] = daily_pnl['pnl_usdt'].cumsum()
++        
++        fig = make_subplots(
++            rows=2, cols=1,
++            subplot_titles=('Daily P&L', 'Cumulative P&L'),
++            vertical_spacing=0.1
++        )
++        
++        # Daily bars
++        colors = ['green' if pnl >= 0 else 'red' for pnl in daily_pnl['pnl_usdt']]
++        fig.add_trace(
++            go.Bar(x=daily_pnl['entry_date'], y=daily_pnl['pnl_usdt'], 
++                   marker_color=colors, name='Daily P&L'),
++            row=1, col=1
++        )
++        
++        # Cumulative line
++        fig.add_trace(
++            go.Scatter(x=daily_pnl['entry_date'], y=daily_pnl['cumulative_pnl'],
++                      mode='lines+markers', name='Cumulative P&L', 
++                      line=dict(color='blue', width=2)),
++            row=2, col=1
++        )
++        
++        fig.update_layout(height=600, showlegend=False)
++        fig.update_xaxes(title_text="Date")
++        fig.update_yaxes(title_text="P&L (USDT)", row=1, col=1)
++        fig.update_yaxes(title_text="Cumulative P&L (USDT)", row=2, col=1)
++        
++        st.plotly_chart(fig, use_container_width=True)
++    
++    # Safety Score Analysis
++    st.markdown("### 🎯 Safety Score Performance")
++    
++    if not closed_trades.empty:
++        # Group by safety score
++        safety_stats = closed_trades.groupby('safety_score').agg({
++            'pnl_usdt': ['count', 'mean', lambda x: len(x[x > 0]) / len(x) * 100]
++        }).round(2)
++        
++        safety_stats.columns = ['Trade Count', 'Avg P&L', 'Win Rate %']
++        safety_stats = safety_stats.reset_index()
++        
++        # Safety score chart
++        fig = px.bar(
++            safety_stats,
++            x='safety_score',
++            y='Win Rate %',
++            title='Win Rate by Safety Score',
++            color='Win Rate %',
++            color_continuous_scale='RdYlGn',
++            text='Trade Count'
++        )
++        fig.update_traces(textposition='outside')
++        st.plotly_chart(fig, use_container_width=True)
++        
++        # Safety stats table
++        st.dataframe(safety_stats, use_container_width=True, hide_index=True)
++    
++    # Recent Trades Table
++    st.markdown("### 📋 Recent Trading Activity")
++    
++    # Display recent trades
++    display_cols = ['symbol', 'direction', 'entry_price', 'exit_price', 'pnl_usdt', 
++                   'safety_score', 'status', 'outcome', 'entry_time']
++    
++    recent_trades = period_trades[display_cols].tail(20).copy()
++    
++    if not recent_trades.empty:
++        # Format the data
++        recent_trades['entry_price'] = recent_trades['entry_price'].round(6)
++        recent_trades['exit_price'] = recent_trades['exit_price'].fillna(0).round(6)
++        recent_trades['pnl_usdt'] = recent_trades['pnl_usdt'].fillna(0).round(2)
++        recent_trades['entry_time'] = pd.to_datetime(recent_trades['entry_time']).dt.strftime('%Y-%m-%d %H:%M')
++        
++        # Style the dataframe
++        def highlight_pnl(val):
++            if pd.isna(val) or val == 0:
++                return ''
++            elif val > 0:
++                return 'background-color: #d4f6d4'
++            else:
++                return 'background-color: #f6d4d4'
++        
++        styled_df = recent_trades.style.applymap(highlight_pnl, subset=['pnl_usdt'])
++        st.dataframe(styled_df, use_container_width=True, hide_index=True)
++        
++        # Export option
++        if st.button("📊 Export Trading Data"):
++            csv = trades_df.to_csv(index=False)
++            st.download_button(
++                label="Download CSV",
++                data=csv,
++                file_name=f"trading_data_{user_id}_{datetime.now().strftime('%Y%m%d')}.csv",
++                mime="text/csv"
++            )
++    
++    # Link to analytics refresh info
++    st.markdown("---")
++    st.caption("Analytics data updates automatically when you track new signals from this app.")
++
+ def chandelier_exit(df: pd.DataFrame, n: int = 22, k: float = 3.0, side: str = "LONG") -> float:
+     """
+     Calculate proper LeBeau Chandelier Exit
+@@ -137,6 +334,130 @@ st.markdown("""
+ 
+ # Initialize session state - v4.2.1: Use setdefault pattern
+ st.session_state.setdefault('signals_history', [])
++st.session_state.setdefault('selected_signals', [])
++st.session_state.setdefault('tracked_trades', [])
++
++
++def _normalize_streamlit_key(value: str) -> str:
++    """Convert arbitrary strings to safe Streamlit widget keys."""
++    return re.sub(r"[^0-9a-zA-Z_]+", "_", value or "")
++
++
++def _store_authenticated_user(user_info: Dict):
++    """Persist authenticated user details in the Streamlit session."""
++    st.session_state.authenticated_user = user_info
++    st.session_state.analytics_user = user_info
++
++    if ANALYTICS_AVAILABLE:
++        try:
++            session_token = auth.create_session(user_info['id'])
++            st.session_state.auth_session_token = session_token
++        except Exception:
++            st.session_state.auth_session_token = None
++
++    if 'signals_history' in st.session_state:
++        st.session_state.signals_history = []
++    st.session_state.pop('tracked_trades', None)
++    st.session_state.pop('selected_signals', None)
++    st.session_state.pop('auth_error', None)
++    st.session_state.pop('auth_notice', None)
++
++
++def logout_user():
++    """Reset authentication-related session state and return to login screen."""
++    st.session_state.pop('authenticated_user', None)
++    st.session_state.pop('analytics_user', None)
++    st.session_state.pop('auth_session_token', None)
++    st.session_state.pop('tracked_trades', None)
++    if 'signals_history' in st.session_state:
++        st.session_state.signals_history = []
++
++    st.session_state.auth_mode_selection = 'Login'
++    st.session_state.auth_notice = "Bạn đã đăng xuất thành công."  # You have logged out successfully.
++    st.rerun()
++
++
++def ensure_user_logged_in() -> Optional[Dict]:
++    """Render authentication flow and return user info when logged in."""
++    if not ANALYTICS_AVAILABLE:
++        st.error("Authentication system unavailable. Please ensure analytics components are installed.")
++        return None
++
++    user = st.session_state.get('authenticated_user')
++    if user:
++        return user
++
++    st.markdown("## 🔐 Đăng nhập để tiếp tục")
++
++    notice = st.session_state.pop('auth_notice', None)
++    if notice:
++        st.info(notice)
++
++    error = st.session_state.pop('auth_error', None)
++    if error:
++        st.error(error)
++
++    if 'auth_mode_selection' not in st.session_state:
++        st.session_state.auth_mode_selection = 'Login'
++
++    mode_label = st.radio(
++        "Authentication Mode",
++        options=("Login", "Create Account"),
++        horizontal=True,
++        key="auth_mode_selection"
++    )
++    mode = 'login' if mode_label == "Login" else 'signup'
++
++    if mode == 'login':
++        with st.form("login_form"):
++            username = st.text_input("Username", placeholder="Enter username")
++            password = st.text_input("Password", type="password", placeholder="Enter password")
++            submitted = st.form_submit_button("Login", type="primary", use_container_width=True)
++
++        if submitted:
++            if not username or not password:
++                st.session_state.auth_error = "Please enter both username and password."
++                st.rerun()
++
++            user_info = auth.authenticate_user(username.strip(), password)
++            if user_info:
++                _store_authenticated_user(user_info)
++                st.rerun()
++            else:
++                st.session_state.auth_error = "Invalid username or password."
++                st.rerun()
++
++        st.caption("Chưa có tài khoản? Chọn **Create Account** để đăng ký.")
++    else:
++        with st.form("signup_form"):
++            username = st.text_input("Username", placeholder="Choose a username")
++            email = st.text_input("Email", placeholder="name@example.com")
++            password = st.text_input("Password", type="password", placeholder="Create a password")
++            confirm_password = st.text_input("Confirm Password", type="password", placeholder="Repeat password")
++            submitted = st.form_submit_button("Create Account", type="primary", use_container_width=True)
++
++        if submitted:
++            if not username or not email or not password or not confirm_password:
++                st.session_state.auth_error = "All fields are required."
++                st.rerun()
++
++            if password != confirm_password:
++                st.session_state.auth_error = "Passwords do not match."
++                st.rerun()
++
++            success, message = auth.register_user(username.strip(), email.strip(), password)
++            if success:
++                st.session_state.auth_notice = "Account created successfully. Please log in."
++                st.session_state.auth_mode_selection = 'Login'
++                st.rerun()
++            else:
++                st.session_state.auth_error = message
++                st.rerun()
++
++        st.caption("Đã có tài khoản? Chọn lại **Login** để đăng nhập.")
++
++    return None
++
+ 
+ class TradingGUI:
+     def __init__(self):
+@@ -258,25 +579,12 @@ class TradingGUI:
+         if 'circuit_breaker_state' not in st.session_state:
+             st.session_state.circuit_breaker_state = self.circuit_breaker.get_status_summary()
+         
+-        # Initialize portfolio tracking in session state (v4.2.1 safe initialization)
+-        st.session_state.setdefault('portfolio_positions', [])
+-        st.session_state.setdefault('portfolio_value', 10000.0)
+-            
+         # Initialize market data caching
+         st.session_state.setdefault('market_data_cache', {})
+         st.session_state.setdefault('cache_timestamps', {})
+             
+         # Cache TTL (3 minutes for faster updates during scanning)
+         self.cache_ttl = 180
+-            
+-        # Restore portfolio positions from session
+-        for pos_data in st.session_state.portfolio_positions:
+-            try:
+-                position = Position(**pos_data)
+-                self.portfolio_risk_manager.add_position(position)
+-            except Exception as e:
+-                # Silently handle restoration errors
+-                pass
+         
+     def get_current_prices(self):
+         """Get REAL current market prices từ Binance API"""
+@@ -1234,75 +1542,89 @@ class TradingGUI:
+         # Clamp to 1-10 range
+         return max(1, min(10, round(safety_score)))
+ 
+-    def add_position_to_portfolio(self, signal: dict, balance: float):
+-        """Add confirmed position to portfolio tracking"""
+-        # v4.2.1: Ensure session state is properly initialized
+-        st.session_state.setdefault('portfolio_positions', [])
+-        
++    def select_signal_for_trade(self, signal: dict):
++        """Track the chosen signal in analytics"""
++        symbol = safe_get_signal_field(signal, 'symbol', 'UNKNOWN')
++
+         if signal.get('portfolio_blocked') or signal.get('liquidation_blocked'):
+-            st.warning("⚠️ Position blocked from being added to portfolio")
+-            return False
+-            
+-        # v4.2.1: Calculate all required fields for position tracking with safe access
++            st.warning("⚠️ Setup này đang bị đánh dấu rủi ro cao, hãy kiểm tra lại trước khi đặt lệnh.")
++
++        analytics_ready = False
++        if ANALYTICS_AVAILABLE:
++            analytics_ready = analytics_integrator.initialize_user_session()
++            if not analytics_ready:
++                st.warning("🔐 Vui lòng đăng nhập analytics để đồng bộ dữ liệu. Lệnh vẫn được lưu cục bộ.")
++
++        entry_price = safe_get_signal_field(signal, 'entry_price', 0.0)
+         position_size_usdt = safe_get_signal_field(signal, 'position_size_usdt', 1000.0)
+         leverage = safe_get_signal_field(signal, 'leverage', 20)
+-        entry_price = safe_get_signal_field(signal, 'entry_price', 0.0)
+         stop_loss = safe_get_signal_field(signal, 'stop_loss', entry_price * 0.98)
+-        
+-        margin_required = signal.get('margin_required', position_size_usdt / leverage)
+-        risk_amount = position_size_usdt * abs(entry_price - stop_loss) / entry_price if entry_price > 0 else 0
+-        risk_percent = (risk_amount / balance) * 100 if balance > 0 else 0
+-        
+-        # Create position dict with all required fields using safe access
+-        position_dict = {
+-            'symbol': safe_get_signal_field(signal, 'symbol', 'UNKNOWN'),
++
++        analytics_payload = {
++            'symbol': symbol,
+             'direction': safe_get_signal_field(signal, 'direction', 'LONG'),
+             'entry_price': entry_price,
+             'position_size_usdt': position_size_usdt,
+             'leverage': leverage,
+             'stop_loss': stop_loss,
+             'take_profit_1': safe_get_signal_field(signal, 'take_profit_1', entry_price * 1.04),
+-            'risk_amount': risk_amount,
+-            'risk_percent': risk_percent,
+-            'margin_required': margin_required,
+-            'notional_value': position_size_usdt,
+-            'timestamp': time.time(),
++            'take_profit_2': safe_get_signal_field(signal, 'take_profit_2', None),
++            'take_profit_3': safe_get_signal_field(signal, 'take_profit_3', None),
++            'risk_reward_ratio': safe_get_signal_field(signal, 'risk_reward_ratio', 2.0),
++            'safety_score': safe_get_signal_field(signal, 'safety_score', 5),
++            'margin_required': signal.get('margin_required', position_size_usdt / leverage if leverage else position_size_usdt),
++            'liquidation_price': signal.get('liquidation_price'),
+             'timeframe': safe_get_signal_field(signal, 'timeframe', '1h'),
+-            'safety_score': safe_get_signal_field(signal, 'safety_score', 5)
++            'market_regime': safe_get_signal_field(signal, 'market_regime', 'N/A'),
++            'volatility_level': safe_get_signal_field(signal, 'volatility_level', 'normal'),
++            'signal_source': 'trading_insight',
++            'strategy_version': signal.get('strategy_version', '4.2.1')
+         }
+-        
+-        # Add to session state
+-        st.session_state.portfolio_positions.append(position_dict)
+-        st.success(f"✅ Position added! Total: {len(st.session_state.portfolio_positions)}")
+-        return True
+ 
+-    def render_portfolio_management_controls(self, signal: dict, symbol: str, balance: float):
+-        """Render portfolio management UI controls for a signal"""
+-        st.markdown("---")
+-        col1, col2, col3 = st.columns([2, 1, 1])
+-        
+-        with col1:
+-            st.markdown("### 🏦 Portfolio Management")
+-            
+-        with col2:
+-            # Check if position already exists
+-            position_exists = any(
+-                pos.get('symbol') == symbol and pos.get('direction') == signal['direction'] 
+-                for pos in st.session_state.portfolio_positions
+-            )
+-            
+-            if not position_exists and not signal.get('portfolio_blocked') and not signal.get('liquidation_blocked'):
+-                if st.button(f"➕ Add to Portfolio", key=f"add_portfolio_{symbol}_{signal['direction']}", type="primary"):
+-                    self.add_position_to_portfolio(signal, balance)
+-            elif position_exists:
+-                st.info("📈 Already in Portfolio")
++        selected_entry = {
++            'symbol': symbol,
++            'direction': analytics_payload['direction'],
++            'entry_price': entry_price,
++            'take_profit_1': analytics_payload.get('take_profit_1'),
++            'stop_loss': analytics_payload.get('stop_loss'),
++            'timeframe': analytics_payload.get('timeframe'),
++            'timestamp': datetime.now().isoformat(),
++            'status': 'open'
++        }
++
++        updated_selected = list(st.session_state.get('selected_signals', []))
++        updated_selected.append(selected_entry)
++        st.session_state['selected_signals'] = updated_selected
++        print("[DEBUG] selected_signals length:", len(updated_selected))
++        st.success(f"📌 Đã chọn lệnh {symbol}. Theo dõi trong mục 'Trades đã chọn'.")
++
++        if analytics_ready:
++            trade_id = track_generated_signal(analytics_payload)
++            if trade_id:
++                st.success(f"✅ Đã lưu lệnh {symbol} vào analytics (ID: {trade_id})")
++                selected_entry['analytics_trade_id'] = trade_id
++
++                tracked_entry = {
++                    'trade_id': trade_id,
++                    'symbol': symbol,
++                    'direction': analytics_payload['direction'],
++                    'entry_price': entry_price,
++                    'take_profit_1': analytics_payload.get('take_profit_1'),
++                    'stop_loss': analytics_payload.get('stop_loss'),
++                    'timeframe': analytics_payload.get('timeframe'),
++                    'timestamp': datetime.now().isoformat(),
++                    'status': 'open'
++                }
++
++                tracked_list = list(st.session_state.get('tracked_trades', []))
++                if not any(trade.get('trade_id') == trade_id for trade in tracked_list):
++                    tracked_list.append(tracked_entry)
++                    st.session_state['tracked_trades'] = tracked_list
++                    print("[DEBUG] tracked_trades length:", len(tracked_list))
+             else:
+-                st.warning("❌ Cannot add (blocked)")
+-                
+-        with col3:
+-            if st.button(f"📋 Copy Setup", key=f"copy_setup_{symbol}_{signal['direction']}"):
+-                # This would copy the futures_code to clipboard in a real app
+-                st.success("📋 Setup copied!")
++                st.warning("⚠️ Không thể lưu trade vào analytics. Kiểm tra kết nối analytics.")
++        else:
++            st.info("ℹ️ Lệnh được lưu cục bộ. Đồng bộ analytics sau khi đăng nhập.")
+ 
+     def create_price_chart(self, df, symbol):
+         """Tạo candlestick chart với indicators"""
+@@ -1394,12 +1716,28 @@ class TradingGUI:
+         return fig
+ 
+ def main():
++    user = ensure_user_logged_in()
++    if not user:
++        return
++
+     gui = TradingGUI()
++
++    if ANALYTICS_AVAILABLE:
++        analytics_integrator.initialize_user_session()
+     
+     # Header
+     st.markdown('<h1 class="main-header">📈 Trading Insight Pro GUI</h1>', unsafe_allow_html=True)
+     
+     # Sidebar
++    st.sidebar.markdown("## 👤 Account")
++    st.sidebar.success(f"Đang đăng nhập: {user['username']}")
++    if user.get('subscription_tier'):
++        st.sidebar.caption(f"Tier: {user['subscription_tier']}")
++    if user.get('email'):
++        st.sidebar.caption(user['email'])
++    if st.sidebar.button("🚪 Logout", use_container_width=True):
++        logout_user()
++    st.sidebar.markdown("---")
+     st.sidebar.markdown("## ⚙️ Trading Parameters")
+     
+     # Symbol selection
+@@ -1551,62 +1889,6 @@ def main():
+     
+     auto_scan = st.sidebar.checkbox("🔄 Auto Scan (0-5 Signals)", help="Scan all coins and show up to 5 highest safety score signals (may return 0-5 depending on quality bars)")
+     
+-    # Portfolio Risk Management Display
+-    st.sidebar.markdown("---")
+-    st.sidebar.markdown("### 🏦 Portfolio Risk Management")
+-    
+-    if balance > 0:
+-        # Calculate portfolio metrics from session state (v4.2.1 safe access)
+-        session_positions = st.session_state.setdefault('portfolio_positions', [])
+-        position_count = len(session_positions)
+-        max_positions = gui.portfolio_risk_manager.max_positions  # Use consistent value from PortfolioRiskManager
+-        
+-        # Calculate risk from session positions
+-        total_risk = sum(pos.get('risk_amount', 0) for pos in session_positions) if session_positions else 0
+-        risk_percentage = total_risk / balance if balance > 0 else 0
+-        
+-        # Risk utilization bars
+-        col1, col2 = st.sidebar.columns(2)
+-        with col1:
+-            max_risk_pct = 0.05  # 5% max portfolio risk
+-            risk_util = risk_percentage / max_risk_pct if max_risk_pct > 0 else 0
+-            color = "🟢" if risk_util < 0.5 else "🟡" if risk_util < 0.8 else "🔴"
+-            st.metric("💰 Risk Used", f"{risk_percentage:.1%}", f"{color} {risk_util:.0%} of limit")
+-            
+-        with col2:
+-            pos_util = position_count / max_positions if max_positions > 0 else 0
+-            color = "🟢" if pos_util < 0.5 else "🟡" if pos_util < 0.8 else "🔴"
+-            st.metric("📊 Positions", f"{position_count}/{max_positions}", f"{color} {pos_util:.0%} used")
+-        
+-        # Current portfolio status
+-        if position_count > 0:
+-            total_notional = sum(pos.get('position_size_usdt', 0) for pos in session_positions)
+-            exposure_multiple = total_notional / balance if balance > 0 else 0
+-            st.sidebar.success(f"""
+-**📈 Active Portfolio:**
+-• Total Risk: ${total_risk:.0f} ({risk_percentage:.1%})
+-• Exposure: {exposure_multiple:.1f}x
+-• Positions: {position_count}
+-            """)
+-        else:
+-            st.sidebar.info("🆕 No active positions - Ready for new trades")
+-        
+-        # Portfolio limits info
+-        with st.sidebar.expander("📋 Risk Limits (Professional)"):
+-            st.write(f"• Max portfolio risk: 5.0%")
+-            st.write(f"• Max per position: 1.0%")
+-            st.write(f"• Max correlated: 3.0%")
+-            st.write(f"• Max positions: {max_positions}")
+-            st.write(f"• Max exposure multiple: 50x")
+-            
+-        # Clear positions button (for demo/testing)
+-        if st.sidebar.button("🗑️ Clear All Positions"):
+-            gui.portfolio_risk_manager.active_positions = []
+-            st.session_state.portfolio_positions = []
+-            st.rerun()
+-    else:
+-        st.sidebar.warning("💰 Set balance > 0 to see portfolio risk limits")
+-    
+     # Determine auto-scan mode
+     if not selected_symbols:
+         auto_scan_mode = True
+@@ -1616,7 +1898,7 @@ def main():
+         symbols_for_analysis = selected_symbols
+     
+     # Main content
+-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Market Dashboard", "🎯 Trading Signals", "📈 Charts", "📋 Signal History"])
++    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Market Dashboard", "🎯 Trading Signals", "📈 Charts", "📋 Signal History", "📈 Analytics"])
+     
+     with tab1:
+         st.markdown("## 📊 Multi-Market Dashboard")
+@@ -1985,10 +2267,12 @@ Leverage: {signal['leverage']}x
+ """
+                             
+                             st.code(futures_code)
+-                            
+-                            # Add portfolio management controls  
+-                            gui.render_portfolio_management_controls(signal, symbol, balance)
+-                            
++
++                            select_key = f"select_trade_{_normalize_streamlit_key(symbol)}_{_normalize_streamlit_key(signal['direction'])}_{idx}"
++                            if st.button("📌 Chọn lệnh này", key=select_key, type="primary"):
++                                print("[DEBUG] button clicked for", symbol)
++                                gui.select_signal_for_trade(signal)
++
+                             # Add to history
+                             signal['generated_at'] = datetime.now()
+                             st.session_state.signals_history.append(signal)
+@@ -2091,9 +2375,11 @@ Leverage: {signal.get('leverage', 'N/A')}x
+ """
+                             
+                             st.code(futures_code)
+-                            
+-                            # Add portfolio management controls
+-                            gui.render_portfolio_management_controls(signal, symbol, balance)
++
++                            select_key = f"select_trade_{_normalize_streamlit_key(symbol)}_{_normalize_streamlit_key(signal['direction'])}_{rank}"
++                            if st.button("📌 Chọn lệnh này", key=select_key, type="primary"):
++                                print("[DEBUG] button clicked for", symbol)
++                                gui.select_signal_for_trade(signal)
+                             
+                             # Add to history
+                             signal['generated_at'] = datetime.now()
+@@ -2201,6 +2487,95 @@ Leverage: {signal.get('leverage', 'N/A')}x
+                 st.rerun()
+         else:
+             st.info("📝 No signals generated yet. Use the Trading Signals tab to generate signals.")
++
++        st.markdown("---")
++        st.markdown("### 📌 Trades đã chọn")
++
++        selected_trades = st.session_state.get('selected_signals', [])
++        print("[DEBUG] rendering selected_trades:", selected_trades)
++        if selected_trades:
++            for idx, trade in enumerate(reversed(selected_trades[-10:])):
++                trade_symbol = trade.get('symbol', 'UNKNOWN')
++                status = trade.get('status', 'open')
++                header = f"{trade_symbol} {trade.get('direction', 'LONG')} @ {trade.get('entry_price', 0):,.4f}"
++                analytics_id = trade.get('analytics_trade_id')
++                if status == 'closed':
++                    header += " ✅"
++
++                with st.expander(header, expanded=status != 'closed'):
++                    col1, col2 = st.columns(2)
++                    with col1:
++                        st.write(f"**Analytics ID:** {analytics_id if analytics_id else 'Chưa đồng bộ'}")
++                        st.write(f"**Được chọn lúc:** {trade.get('timestamp', '')[:19]}")
++                        st.write(f"**Trạng thái:** {status}")
++                    with col2:
++                        st.write(f"**TP1:** {trade.get('take_profit_1', 'N/A')}")
++                        st.write(f"**Stop Loss:** {trade.get('stop_loss', 'N/A')}")
++                        st.write(f"**Timeframe:** {trade.get('timeframe', 'N/A')}")
++                        if status == 'closed':
++                            st.write(f"**Outcome:** {trade.get('outcome', 'N/A')}")
++                            st.write(f"**Exit Price:** {trade.get('exit_price', 'N/A')}")
++
++                    if status != 'closed':
++                        if analytics_id:
++                            form_key = f"close_trade_{_normalize_streamlit_key(str(analytics_id))}_{idx}"
++                            with st.form(form_key):
++                                exit_price = st.number_input(
++                                    "Exit Price",
++                                    min_value=0.0,
++                                    value=float(trade.get('take_profit_1') or trade.get('entry_price') or 0.0),
++                                    key=f"exit_price_input_{analytics_id}_{idx}"
++                                )
++                                outcome = st.selectbox(
++                                    "Outcome",
++                                    options=["tp1_hit", "tp2_hit", "tp3_hit", "sl_hit", "manual_close"],
++                                    index=0,
++                                    key=f"outcome_select_{analytics_id}_{idx}"
++                                )
++                                submit = st.form_submit_button("✅ Đánh dấu đã đóng", use_container_width=True)
++
++                            if submit:
++                                if exit_price <= 0:
++                                    st.warning("⚠️ Exit price phải lớn hơn 0")
++                                else:
++                                    success = analytics_integrator.update_trade_outcome_by_id(analytics_id, exit_price, outcome)
++                                    if success:
++                                        trade['status'] = 'closed'
++                                        trade['outcome'] = outcome
++                                        trade['exit_price'] = exit_price
++                                        trade['closed_at'] = datetime.now().isoformat()
++
++                                        # Sync tracked trades list if present
++                                        for stored in st.session_state.get('tracked_trades', []):
++                                            if stored.get('trade_id') == analytics_id:
++                                                stored.update({
++                                                    'status': 'closed',
++                                                    'outcome': outcome,
++                                                    'exit_price': exit_price,
++                                                    'closed_at': trade['closed_at']
++                                                })
++                                                break
++
++                                        st.success("✅ Đã cập nhật kết quả trade vào analytics")
++                                        st.rerun()
++                                    else:
++                                        st.warning("❌ Không thể cập nhật analytics. Thử lại sau.")
++                        else:
++                            st.info("ℹ️ Lệnh chưa đồng bộ với analytics nên chưa thể cập nhật kết quả tự động.")
++        else:
++            st.info("Chưa có lệnh nào được chọn từ tab Trading.")
++    
++    # Analytics Tab
++    with tab5:
++        if ANALYTICS_AVAILABLE:
++            render_analytics_tab()
++        else:
++            st.error("📊 Analytics module not available")
++            st.info("Install analytics module to access performance tracking features")
++    
++    # Analytics Integration
++    if ANALYTICS_AVAILABLE:
++        add_analytics_integration_to_main_gui()
+     
+     # Footer
+     st.markdown("---")
+@@ -2213,4 +2588,4 @@ Leverage: {signal.get('leverage', 'N/A')}x
+     """, unsafe_allow_html=True)
+ 
+ if __name__ == "__main__":
+-    main()
+\ No newline at end of file
++    main()

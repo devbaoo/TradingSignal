@@ -23,6 +23,8 @@ class Position:
     timestamp: float
     timeframe: str
     safety_score: int
+    analytics_trade_id: Optional[int] = None
+    status: str = "open"
 
 @dataclass 
 class PortfolioRisk:
@@ -185,9 +187,12 @@ class PortfolioRiskManager:
         """Add new position to portfolio tracking"""
         self.active_positions.append(position)
         
-    def remove_position(self, symbol: str):
-        """Remove position when closed"""
-        self.active_positions = [pos for pos in self.active_positions if pos.symbol != symbol]
+    def remove_position(self, symbol: str, direction: str, timestamp: float):
+        """Remove a specific position when closed"""
+        self.active_positions = [
+            pos for pos in self.active_positions
+            if not (pos.symbol == symbol and pos.direction == direction and pos.timestamp == timestamp)
+        ]
         
     def get_portfolio_metrics(self, portfolio_balance: float) -> PortfolioRisk:
         """Get current portfolio risk metrics"""
