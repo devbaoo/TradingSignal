@@ -1,5 +1,198 @@
 # 🎯 Signal Generation Logic - Detailed Algorithm Documentation
 
+**Version 4.2** - Portfolio Management Enhanced với Session State Architecture
+
+## 🚀 **Latest Portfolio Management Improvements (September 27, 2025)**
+
+### ✅ **Session State Portfolio Architecture**
+
+**Previous Issue**: Portfolio manager objects được tạo mới mỗi lần Streamlit rerun, causing positions to not persist properly in the UI.
+
+**Solution**: Complete migration to session state-based portfolio management với simplified architecture.
+
+#### **New Portfolio Management Logic:**
+
+1. **Session State Primary Storage**:
+   - All portfolio positions stored in `st.session_state.portfolio_positions`
+   - Persistent across Streamlit reruns và page refreshes
+   - Direct calculation of portfolio metrics from session data
+
+2. **Simplified Add Position Flow**:
+   ```python
+   def add_position_to_portfolio(self, signal: dict, balance: float):
+       """Add position directly to session state - production clean"""        
+       if signal.get('portfolio_blocked') or signal.get('liquidation_blocked'):
+           st.warning("⚠️ Position blocked from being added to portfolio")
+           return False
+           
+       # Create position dict 
+       position_dict = {
+           'symbol': signal['symbol'],
+           'direction': signal['direction'],
+           'entry_price': signal['entry_price'],
+           'position_size_usdt': signal['position_size_usdt'],
+           'leverage': signal['leverage'],
+           'stop_loss': signal['stop_loss'],
+           'take_profit_1': signal['take_profit_1'],
+           'risk_amount': signal['position_size_usdt'] * abs(signal['entry_price'] - signal['stop_loss']) / signal['entry_price'],
+           'timestamp': time.time(),
+           'timeframe': signal['timeframe'],
+           'safety_score': signal['safety_score']
+       }
+       
+       # Add to session state
+       st.session_state.portfolio_positions.append(position_dict)
+       st.success(f"✅ Position added! Total: {len(st.session_state.portfolio_positions)}")
+       return True
+   ```
+
+3. **Real-Time Portfolio Metrics**:
+   ```python
+   # Calculate portfolio metrics from session state
+   session_positions = st.session_state.portfolio_positions if 'portfolio_positions' in st.session_state else []
+   position_count = len(session_positions)
+   max_positions = 3
+   
+   # Calculate risk from session positions
+   total_risk = sum(pos.get('risk_amount', 0) for pos in session_positions) if session_positions else 0
+   risk_percentage = total_risk / balance if balance > 0 else 0
+   
+   # Portfolio status display
+   if position_count > 0:
+       total_notional = sum(pos.get('position_size_usdt', 0) for pos in session_positions)
+       avg_leverage = total_notional / balance if balance > 0 else 0
+       st.sidebar.success(f"""
+   **📈 Active Portfolio:**
+   • Total Risk: ${total_risk:.0f} ({risk_percentage:.1%})
+   • Avg Leverage: {avg_leverage:.1f}x
+   • Positions: {position_count}
+       """)
+   else:
+       st.sidebar.info("🆕 No active positions - Ready for new trades")
+   ```
+
+4. **Portfolio Management UI Controls**:
+   ```python
+   def render_portfolio_management_controls(self, signal: dict, symbol: str, balance: float):
+       """Render portfolio management UI controls for a signal"""
+       st.markdown("---")
+       col1, col2, col3 = st.columns([2, 1, 1])
+       
+       with col1:
+           st.markdown("### 🏦 Portfolio Management")
+           
+       with col2:
+           # Check if position already exists
+           position_exists = any(
+               pos.get('symbol') == symbol and pos.get('direction') == signal['direction'] 
+               for pos in st.session_state.portfolio_positions
+           )
+           
+           if not position_exists and not signal.get('portfolio_blocked') and not signal.get('liquidation_blocked'):
+               if st.button(f"➕ Add to Portfolio", key=f"add_portfolio_{symbol}_{signal['direction']}", type="primary"):
+                   self.add_position_to_portfolio(signal, balance)
+           elif position_exists:
+               st.info("📈 Already in Portfolio")
+           else:
+               st.warning("❌ Cannot add (blocked)")
+               
+       with col3:
+           if st.button(f"📋 Copy Setup", key=f"copy_setup_{symbol}_{signal['direction']}"):
+               st.success("📋 Setup copied!")
+   ```
+
+### **Architecture Benefits:**
+
+1. **Persistent Storage**: Session state survives Streamlit reruns
+2. **Simple Logic**: Direct session state manipulation, no object dependencies
+3. **Real-Time Updates**: Immediate UI updates when positions added
+4. **Error Resilient**: Graceful handling of missing or corrupted data
+5. **Performance**: No object reconstruction overhead
+6. **User Experience**: Consistent portfolio state across interactions
+
+### **Portfolio Risk Management Integration:**
+
+The session state approach seamlessly integrates with risk management:
+
+```python
+# Portfolio limits validation from session state
+session_positions = st.session_state.portfolio_positions if 'portfolio_positions' in st.session_state else []
+current_risk = sum(pos.get('risk_amount', 0) for pos in session_positions)
+current_positions = len(session_positions)
+
+# Risk utilization display
+max_risk_pct = 0.05  # 5% max portfolio risk
+risk_util = (current_risk / balance) / max_risk_pct if max_risk_pct > 0 else 0
+color = "🟢" if risk_util < 0.5 else "🟡" if risk_util < 0.8 else "🔴"
+
+# Professional portfolio metrics
+st.metric("💰 Risk Used", f"{(current_risk/balance):.1%}", f"{color} {risk_util:.0%} of limit")
+st.metric("📊 Positions", f"{current_positions}/3", f"{color} {(current_positions/3):.0%} used")
+```
+
+---
+
+**Version 4.1** - Enhanced with 9 Critical Reliability & Consistency Improvements
+
+## 🚀 **Latest Reliability Improvements (September 27, 2025)**
+
+### ✅ **9 Critical Enhancements Completed**
+
+1. **✅ Futures Filter Hard Thresholds**
+
+   - Spread ≤ 5bps, depth@0.1% ≥ $50k, |funding| ≤ 0.10%
+   - OI change > 25% + LS ratio crowded detection
+   - Eliminates unreliable futures contracts
+
+2. **✅ Dynamic Correlation Clustering**
+
+   - Rolling correlation analysis (90-200 candles) replaces static sector lists
+   - DBSCAN + K-means clustering with regime adaptation
+   - Real-time correlation-based position limits
+
+3. **✅ Multi-timeframe ATR Reference**
+
+   - 5m signals use 15m/1h ATR for liquidation safety
+   - Timeframe scaling: 1m→2.0x, 5m→1.5x, 1h→1.0x
+   - Eliminates phantom safety buffers
+
+4. **✅ Dynamic Cache TTL**
+
+   - Adaptive TTL: 1m→20-30s, 5m→60-90s, ≥1h→180s
+   - Volatility & market activity aware caching
+   - Production-ready cache interface
+
+5. **✅ Calibrated Safety Score Mapping**
+
+   - Isotonic regression replaces hardcoded win rates
+   - Out-of-sample performance tracking & calibration
+   - Real probability estimates
+
+6. **✅ Smart Auto-scan Results**
+
+   - Market condition adaptive quality bars
+   - Zero results capability when standards not met
+   - Circuit breaker integration
+
+7. **✅ Production Cache Architecture**
+
+   - Abstract cache interface for service/batch deployment
+   - Streamlit adapter maintains GUI compatibility
+   - Scalable for institutional use
+
+8. **✅ Real Position Sizing**
+
+   - Intelligent position sizing replaces all placeholders
+   - Safety & confidence-based risk adjustments
+   - Institutional-grade risk calculations
+
+9. **✅ Unified Time Stop Management**
+   - Timeframe-adaptive stops: 1m→30, 5m→20, 15m→15, 1h→12 candles
+   - Strategy & market condition multipliers
+   - Consistent across all risk modules
+
+---
+
 **Version 4.0** - Professional Institutional-Grade Futures Trading System với Enhanced Performance & Clean Architecture
 
 ## 📋 **Table of Contents**

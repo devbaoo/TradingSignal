@@ -192,7 +192,14 @@ class PortfolioRiskManager:
     def get_portfolio_metrics(self, portfolio_balance: float) -> PortfolioRisk:
         """Get current portfolio risk metrics"""
         if not self.active_positions:
-            return PortfolioRisk(0, 0, 0, 0, 0, 0)
+            return PortfolioRisk(
+                total_risk_amount=0,
+                total_notional=0,
+                risk_percentage=0,
+                max_correlated_risk=0,
+                position_count=0,
+                leverage_weighted_avg=0
+            )
             
         total_risk = sum(pos.risk_amount for pos in self.active_positions)
         total_notional = sum(pos.position_size_usdt for pos in self.active_positions)
@@ -207,8 +214,9 @@ class PortfolioRiskManager:
             ]
             if cluster_positions:
                 cluster_risk = sum(pos.risk_amount for pos in cluster_positions)
+                max_cluster_risk = max(max_cluster_risk, cluster_risk)
+        
         # Portfolio exposure ratio (institutional metric)
-        total_notional = sum(pos.position_size_usdt for pos in self.active_positions)
         portfolio_exposure_ratio = total_notional / portfolio_balance if portfolio_balance > 0 else 0
         
         return PortfolioRisk(

@@ -1,5 +1,6 @@
 """
 Advanced Risk Management with ATR-based stops and professional features
+Multi-timeframe ATR reference for improved liquidation safety
 """
 
 import numpy as np
@@ -7,6 +8,9 @@ import pandas as pd
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -18,6 +22,14 @@ class AdvancedRiskLevel:
     partial_tp_ratio: float    # Take partial profits at this ratio
     partial_tp_percent: float  # % to close at partial TP
     chandelier_atr_mult: float # ATR multiplier for trailing stop
+
+@dataclass 
+class TimeframeATRConfig:
+    """Configuration for multi-timeframe ATR calculation"""
+    base_timeframe: str        # Base timeframe for signals (e.g., '5m')
+    reference_timeframe: str   # Higher timeframe for ATR reference (e.g., '1h')
+    scaling_factor: float      # Additional scaling for base TF ATR
+    min_candles_required: int  # Minimum candles needed for calculation
 
 
 class ATRRiskManager:
@@ -51,33 +63,128 @@ class ATRRiskManager:
                 chandelier_atr_mult=2.5
             )
         }
+        
+        # Multi-timeframe ATR configurations
+        self.timeframe_configs = {
+            '1m': TimeframeATRConfig('1m', '5m', 1.5, 50),
+            '5m': TimeframeATRConfig('5m', '15m', 1.3, 40), 
+            '15m': TimeframeATRConfig('15m', '1h', 1.2, 30),
+            '1h': TimeframeATRConfig('1h', '4h', 1.1, 25),
+            '4h': TimeframeATRConfig('4h', '1d', 1.0, 20),
+            '1d': TimeframeATRConfig('1d', '1d', 1.0, 14)  # Daily uses itself
+        }
+        
+        self.logger = logging.getLogger(__name__)
+    
+    def get_timeframe_multiplier(self, timeframe: str) -> float:
+        """Get ATR scaling factor for timeframe."""
+        timeframe_multipliers = {
+            '1m': 2.0,   # Higher multiplier for short TFs
+            '5m': 1.5,
+            '15m': 1.2,
+            '1h': 1.0,
+            '4h': 0.9,
+            '1d': 0.8
+        }
+        return timeframe_multipliers.get(timeframe, 1.0)
+    
+    def calculate_multi_timeframe_atr(self, 
+                                    base_df: pd.DataFrame,
+                                    reference_df: Optional[pd.DataFrame],
+                                    timeframe: str) -> float:
+        """Calculate ATR using multi-timeframe approach for better safety."""
+        try:
+            # Get configuration for this timeframe
+            config = self.timeframe_configs.get(timeframe, 
+                                              TimeframeATRConfig(timeframe, timeframe, 1.0, 14))
+            
+            # Calculate base timeframe ATR
+            base_atr = self._calculate_atr(base_df)
+            if pd.isna(base_atr) or base_atr == 0:
+                self.logger.warning(f"Invalid base ATR for {timeframe}")
+                return 0
+            
+            # If no reference data, use scaled base ATR
+            if reference_df is None or len(reference_df) < 14:
+                scaling_factor = self.get_timeframe_multiplier(timeframe)
+                return base_atr * scaling_factor
+            
+            # Calculate reference timeframe ATR
+            reference_atr = self._calculate_atr(reference_df)
+            
+            if pd.isna(reference_atr) or reference_atr == 0:
+                # Fallback to scaled base ATR
+                scaling_factor = self.get_timeframe_multiplier(timeframe)
+                return base_atr * scaling_factor
+            
+            # Weight combination: prefer reference TF for liquidation safety
+            # For shorter timeframes, reference TF gets higher weight
+            if timeframe in ['1m', '5m']:
+                reference_weight = 0.7  # Higher weight for reference
+                base_weight = 0.3
+            elif timeframe in ['15m', '1h']:
+                reference_weight = 0.6
+                base_weight = 0.4
+            else:
+                reference_weight = 0.5  # Equal weight for longer TFs
+                base_weight = 0.5
+            
+            # Combined ATR with timeframe scaling
+            combined_atr = (reference_atr * reference_weight + base_atr * base_weight)
+            final_atr = combined_atr * config.scaling_factor
+            
+            self.logger.debug(f"Multi-TF ATR for {timeframe}: base={base_atr:.6f}, "
+                            f"ref={reference_atr:.6f}, final={final_atr:.6f}")
+            
+            return final_atr
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating multi-TF ATR: {e}")
+            # Emergency fallback
+            return self._calculate_atr(base_df) * self.get_timeframe_multiplier(timeframe)
+    
+    def _calculate_atr(self, df: pd.DataFrame, period: int = 14) -> float:
+        """Calculate standard ATR for a dataframe."""
+        if len(df) < period:
+            return 0
+            
+        try:
+            high = df['high']
+            low = df['low']
+            close = df['close']
+            
+            tr1 = high - low
+            tr2 = abs(high - close.shift(1))
+            tr3 = abs(low - close.shift(1))
+            
+            true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+            atr = true_range.rolling(period).mean().iloc[-1]
+            
+            return atr if not pd.isna(atr) else 0
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating ATR: {e}")
+            return 0
     
     def calculate_atr_stops(self, 
                            df: pd.DataFrame,
                            entry_price: float,
                            direction: str,
                            risk_level: str = 'MODERATE',
-                           market_analysis: Dict = None) -> Dict:
-        """Calculate ATR-based stop loss and take profit levels"""
+                           market_analysis: Dict = None,
+                           timeframe: str = '5m',
+                           reference_df: Optional[pd.DataFrame] = None) -> Dict:
+        """Calculate ATR-based stop loss and take profit levels using multi-timeframe ATR"""
         
         if len(df) < 14:
             return self._fallback_levels(entry_price, direction)
         
         risk_params = self.risk_levels[risk_level]
         
-        # Calculate ATR (14 period)
-        high = df['high']
-        low = df['low'] 
-        close = df['close']
+        # Use multi-timeframe ATR calculation for better safety
+        atr = self.calculate_multi_timeframe_atr(df, reference_df, timeframe)
         
-        tr1 = high - low
-        tr2 = abs(high - close.shift(1))
-        tr3 = abs(low - close.shift(1))
-        
-        true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        atr = true_range.rolling(14).mean().iloc[-1]
-        
-        if pd.isna(atr) or atr == 0:
+        if atr == 0:
             return self._fallback_levels(entry_price, direction)
         
         # DYNAMIC R/R CALCULATION based on market analysis
@@ -85,29 +192,60 @@ class ATRRiskManager:
             risk_params.partial_tp_ratio, market_analysis, df
         )
         
+        # Calculate Unified Time Stop using manager
+        from src.unified_time_stop_manager import get_time_stop_manager
+        time_stop_manager = get_time_stop_manager()
+        
+        # Determine strategy type from market analysis
+        strategy_type = 'momentum'  # Default
+        if market_analysis:
+            if market_analysis.get('trend_strength', 0) > 0.7:
+                strategy_type = 'trend_following'
+            elif market_analysis.get('volatility', 'NORMAL') == 'HIGH':
+                strategy_type = 'breakout'
+        
+        # Determine market condition
+        market_condition = 'trending'  # Default
+        if market_analysis:
+            if market_analysis.get('volatility', 'NORMAL') == 'HIGH':
+                market_condition = 'high_volatility'
+            elif market_analysis.get('trend_score', 0.5) < 0.3:
+                market_condition = 'sideways'
+        
+        # Calculate adaptive time stop
+        unified_time_stop = time_stop_manager.calculate_time_stop_candles(
+            timeframe=timeframe,
+            strategy_type=strategy_type,
+            market_condition=market_condition,
+            safety_score=int(market_analysis.get('safety_score', 7)) if market_analysis else 7,
+            confidence=market_analysis.get('confidence', 0.75) if market_analysis else 0.75
+        )
+        
         # Calculate stops based on direction
         if direction == "LONG":
-            # ATR-based stop loss
+            # ATR-based stop loss (using enhanced ATR)
             stop_loss = entry_price - (atr * risk_params.atr_stop_multiplier)
             
             # Dynamic take profit levels based on analysis
             tp1 = entry_price + (atr * dynamic_tp_multiplier)  # Dynamic TP1
             tp2 = entry_price + (atr * dynamic_tp_multiplier * 1.6)  # Dynamic TP2
             
-            # LeBeau Chandelier Exit formula (proper implementation)
-            chandelier_stop = high.rolling(risk_params.time_stop_candles).max().iloc[-1] - \
+            # LeBeau Chandelier Exit formula using multi-TF ATR and unified time stop
+            high = df['high']
+            chandelier_stop = high.rolling(unified_time_stop).max().iloc[-1] - \
                              (atr * risk_params.chandelier_atr_mult)
             
         else:  # SHORT
-            # ATR-based stop loss
+            # ATR-based stop loss (using enhanced ATR)
             stop_loss = entry_price + (atr * risk_params.atr_stop_multiplier)
             
             # Dynamic take profit levels based on analysis
             tp1 = entry_price - (atr * dynamic_tp_multiplier)  # Dynamic TP1
             tp2 = entry_price - (atr * dynamic_tp_multiplier * 1.6)  # Dynamic TP2
             
-            # LeBeau Chandelier Exit formula (proper implementation)
-            chandelier_stop = low.rolling(risk_params.time_stop_candles).min().iloc[-1] + \
+            # LeBeau Chandelier Exit formula using multi-TF ATR and unified time stop
+            low = df['low']
+            chandelier_stop = low.rolling(unified_time_stop).min().iloc[-1] + \
                              (atr * risk_params.chandelier_atr_mult)
         
         # Calculate risk/reward ratios
@@ -129,7 +267,7 @@ class ATRRiskManager:
             'breakeven_trigger': entry_price + (risk * risk_params.breakeven_ratio) if direction == "LONG" 
                                else entry_price - (risk * risk_params.breakeven_ratio),
             'partial_tp_size': risk_params.partial_tp_percent,
-            'time_stop_candles': risk_params.time_stop_candles,
+            'time_stop_candles': unified_time_stop,
             'risk_level': risk_level
         }
     
@@ -161,7 +299,7 @@ class ATRRiskManager:
             'rr_ratio_2': reward2 / risk if risk > 0 else 8.0,  # Target 1:8.0 for 80%+ ROI
             'breakeven_trigger': entry_price + (risk * 0.6) if direction == "LONG" else entry_price - (risk * 0.6),
             'partial_tp_size': 0.5,
-            'time_stop_candles': 15,
+            'time_stop_candles': 20,  # Will be overridden by unified time stop manager
             'risk_level': 'FALLBACK'
         }
     
