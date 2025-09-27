@@ -25,6 +25,62 @@ from src.robust_backtester import RobustBacktester
 from src.portfolio_risk_manager import PortfolioRiskManager, Position
 from src.circuit_breaker import CircuitBreakerManager
 
+# Import constants for v4.2.1 standardization
+from constants import MIN_RR, get_regime_strength, safe_get_signal_field
+
+def chandelier_exit(df: pd.DataFrame, n: int = 22, k: float = 3.0, side: str = "LONG") -> float:
+    """
+    Calculate proper LeBeau Chandelier Exit
+    
+    Args:
+        df: DataFrame with OHLCV data
+        n: Period for ATR and highest high/lowest low (default 22)
+        k: ATR multiplier (default 3.0)
+        side: "LONG" or "SHORT"
+        
+    Returns:
+        Chandelier Exit level
+    """
+    try:
+        atr = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=n).average_true_range()
+        if side == "LONG":
+            hh = df['high'].rolling(n).max()
+            return float(hh.iloc[-1] - k * atr.iloc[-1])
+        else:
+            ll = df['low'].rolling(n).min()
+            return float(ll.iloc[-1] + k * atr.iloc[-1])
+    except Exception as e:
+        # Fallback calculation
+        atr_simple = df['close'].rolling(n).std() * 2.0  # Simplified ATR
+        if side == "LONG":
+            hh = df['high'].rolling(n).max()
+            return float(hh.iloc[-1] - k * atr_simple.iloc[-1])
+        else:
+            ll = df['low'].rolling(n).min()
+            return float(ll.iloc[-1] + k * atr_simple.iloc[-1])
+
+def get_symbol_cluster(symbol: str) -> str:
+    """Get cluster classification for symbol (v4.2.1 stub)"""
+    # Simple clustering based on symbol patterns
+    if symbol.startswith(('BTC', 'ETH')):
+        return 'major'
+    elif symbol in ['BNB', 'ADA', 'XRP', 'SOL', 'DOT', 'AVAX', 'MATIC']:
+        return 'altcoin'
+    elif symbol in ['DOGE', 'SHIB', 'PEPE', 'FLOKI']:
+        return 'meme'
+    else:
+        return 'defi'
+
+def check_cluster_limits(positions: list, new_symbol: str, max_correlated_risk: float = 0.03) -> tuple:
+    """Check if adding position violates cluster limits (v4.2.1 stub)"""
+    new_cluster = get_symbol_cluster(new_symbol)
+    cluster_risk = sum(pos.get('risk_percent', 0) for pos in positions 
+                      if get_symbol_cluster(pos.get('symbol', '')) == new_cluster)
+    
+    if cluster_risk > max_correlated_risk * 100:  # Convert to percentage
+        return False, f"Cluster {new_cluster} risk too high: {cluster_risk:.1f}%"
+    return True, "Cluster limits OK"
+
 # Set page config
 st.set_page_config(
     page_title="Trading Insight Pro",
@@ -79,9 +135,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize session state
-if 'signals_history' not in st.session_state:
-    st.session_state.signals_history = []
+# Initialize session state - v4.2.1: Use setdefault pattern
+st.session_state.setdefault('signals_history', [])
 
 class TradingGUI:
     def __init__(self):
@@ -203,15 +258,13 @@ class TradingGUI:
         if 'circuit_breaker_state' not in st.session_state:
             st.session_state.circuit_breaker_state = self.circuit_breaker.get_status_summary()
         
-        # Initialize portfolio tracking in session state
-        if 'portfolio_positions' not in st.session_state:
-            st.session_state.portfolio_positions = []
+        # Initialize portfolio tracking in session state (v4.2.1 safe initialization)
+        st.session_state.setdefault('portfolio_positions', [])
+        st.session_state.setdefault('portfolio_value', 10000.0)
             
         # Initialize market data caching
-        if 'market_data_cache' not in st.session_state:
-            st.session_state.market_data_cache = {}
-        if 'cache_timestamps' not in st.session_state:
-            st.session_state.cache_timestamps = {}
+        st.session_state.setdefault('market_data_cache', {})
+        st.session_state.setdefault('cache_timestamps', {})
             
         # Cache TTL (3 minutes for faster updates during scanning)
         self.cache_ttl = 180
@@ -439,21 +492,21 @@ class TradingGUI:
                 reward = entry_price - take_profit_1
                 
             risk_reward_ratio = reward / risk if risk > 0 else 0
-            if risk_reward_ratio < 2.0:  # Institutional standard - minimum 1:2.0 R/R
+            if risk_reward_ratio < MIN_RR:  # Use consistent constant - minimum 1:2.0 R/R
                 return None  # R/R too low for institutional trading
             
             # Quick safety score
             confidence_score = latest_signal.get('confidence', 0.5)
             regime = latest_signal.get('regime')
-            # Handle both object and dict regime types
-            if hasattr(regime, 'regime_strength'):
-                regime_strength = regime.regime_strength
-            elif isinstance(regime, dict):
-                regime_strength = regime.get('strength', 0.5)
-            else:
-                regime_strength = 0.5
+            # v4.2.1: Use safe regime access helper
+            regime_strength = get_regime_strength(regime)
             
-            safety_score = min(10, int(confidence_score * 4 + regime_strength * 4 + min(risk_reward_ratio/3, 2)))
+            # v4.2.1: Use only enhanced safety score calculation
+            market_analysis = self.analyze_market(df)
+            safety_score = self.calculate_enhanced_safety_score(
+                confidence_score, regime_strength, risk_reward_ratio, market_analysis, 
+                futures_approved=True  # Assume approved for batch mode
+            )
             
             if safety_score < min_safety:
                 return None
@@ -752,13 +805,15 @@ class TradingGUI:
                 stop_loss = entry_price * (1 - price_change_sl / 100)
                 take_profit_1 = entry_price * (1 + price_change_tp / 100)
                 take_profit_2 = entry_price * (1 + price_change_tp * 1.2 / 100)
-                chandelier_stop = entry_price * (1 - price_change_sl * 0.8 / 100)  # Tighter trailing
+                # Proper LeBeau Chandelier Exit
+                chandelier_stop = chandelier_exit(df, n=22, k=3.0, side="LONG")
             else:
                 # For SHORT positions
                 stop_loss = entry_price * (1 + price_change_sl / 100)
                 take_profit_1 = entry_price * (1 - price_change_tp / 100)
                 take_profit_2 = entry_price * (1 - price_change_tp * 1.2 / 100)
-                chandelier_stop = entry_price * (1 + price_change_sl * 0.8 / 100)
+                # Proper LeBeau Chandelier Exit
+                chandelier_stop = chandelier_exit(df, n=22, k=3.0, side="SHORT")
                 
                 # Ensure TP values don't go below 10% of entry price for SHORT
                 min_price = entry_price * 0.1
@@ -800,8 +855,12 @@ class TradingGUI:
             
         else:
             # PROFESSIONAL ATR-based TP/SL with dynamic R/R
-            risk_level = 'CONSERVATIVE' if regime.regime_strength < 0.6 else 'MODERATE'
-            if regime.regime_strength > 0.8:
+            # Handle both object and dict regime types
+            # v4.2.1: Use safe regime access helper
+            regime_strength = get_regime_strength(regime)
+                
+            risk_level = 'CONSERVATIVE' if regime_strength < 0.6 else 'MODERATE'
+            if regime_strength > 0.8:
                 risk_level = 'AGGRESSIVE'
             
             # Prepare market analysis for dynamic R/R calculation
@@ -825,10 +884,13 @@ class TradingGUI:
         
         # Step 5: Calculate leverage first (needed for leveraged returns calculation)
         if tp_percent is None:  # ATR mode - sử dụng leverage thông minh
+            # v4.2.1: Use safe regime access helper
+            regime_strength = get_regime_strength(regime)
+            
             # Cho phép leverage cao hơn trong ATR mode vì đã có risk management tốt
-            if regime.regime_strength > 0.7 and latest_signal['confidence'] > 0.7:
+            if regime_strength > 0.7 and latest_signal['confidence'] > 0.7:
                 max_leverage = min(selected_leverage, 25)  # High confidence = higher leverage
-            elif regime.regime_strength > 0.5:
+            elif regime_strength > 0.5:
                 max_leverage = min(selected_leverage, 20)  # Medium confidence = default leverage
             else:
                 max_leverage = min(selected_leverage, 15)  # Low confidence = lower leverage
@@ -841,43 +903,24 @@ class TradingGUI:
                 entry_price, take_profit_1, stop_loss, max_leverage, signal_direction
             )
         
-        # Step 6: ❌ CRITICAL R/R VALIDATION - REJECT if natural R/R < 2.0 (Compliance)
-        if risk_reward_ratio < 2.0:
-            st.error(f"❌ SIGNAL REJECTED: Natural Risk/Reward ratio {risk_reward_ratio:.2f} below compliance minimum 2.0")
+        # Step 6: ❌ CRITICAL R/R VALIDATION - REJECT if natural R/R < MIN_RR (Compliance)
+        if risk_reward_ratio < MIN_RR:
+            st.error(f"❌ SIGNAL REJECTED: Natural Risk/Reward ratio {risk_reward_ratio:.2f} below compliance minimum {MIN_RR}")
             st.warning("⚠️ Compliance Rule: We never force TP adjustments. Natural market conditions must provide adequate R/R.")
             st.info("💡 This protects you from unrealistic profit targets that may not be achievable.")
             return None
         
-        # Step 7: STRICT Professional Safety Scoring (9-10/10 = Near 100% win rate)
-        safety_score = 0  # Start from zero
+        # Step 7: v4.2.1 - Use only enhanced safety score calculation (single method)
         confidence_score = latest_signal.get('confidence', 0.5)
+        # v4.2.1: Use safe regime access helper
+        regime_strength = get_regime_strength(regime)
         
-        # CONFIDENCE COMPONENT (max 3 points)
-        if confidence_score >= 0.9:
-            safety_score += 3  # Excellent confidence
-        elif confidence_score >= 0.8:
-            safety_score += 2  # Good confidence
-        elif confidence_score >= 0.7:
-            safety_score += 1  # Fair confidence
-        # Below 0.7 = 0 points
+        # Step 8: Calculate enhanced safety score using single method (v4.2.1)
+        safety_score = self.calculate_enhanced_safety_score(
+            confidence_score, regime_strength, risk_reward_ratio, market_analysis, futures_approved
+        )
         
-        # REGIME STRENGTH COMPONENT (max 3 points)
-        if regime.regime_strength >= 0.9:
-            safety_score += 3  # Very strong regime
-        elif regime.regime_strength >= 0.8:
-            safety_score += 2  # Strong regime
-        elif regime.regime_strength >= 0.7:
-            safety_score += 1  # Medium regime
-        # Below 0.7 = 0 points
-        
-        # RISK/REWARD COMPONENT (max 2 points)
-        if risk_reward_ratio >= 3.0:
-            safety_score += 2  # Excellent R/R
-        elif risk_reward_ratio >= 2.5:
-            safety_score += 1  # Good R/R
-        # Below 2.5 = 0 points (but already passed minimum 2.0 check)
-        
-        # Step 8: Calculate intelligent position sizing (now with safety_score available)
+        # Step 9: Calculate intelligent position sizing (now with safety_score available)
         from src.intelligent_position_sizer import get_position_sizer
         
         position_sizer = get_position_sizer()
@@ -899,54 +942,6 @@ class TradingGUI:
         position_size_usdt = position_sizing_result['position_size_usdt']
         margin_required = position_sizing_result['margin_required']
         effective_leverage = position_sizing_result['leverage_used']
-        
-        # Step 9: Complete safety score calculation with additional factors
-        
-        # FUTURES APPROVAL (max 1 point)
-        if futures_approved:
-            safety_score += 1
-        
-        # VOLUME CONFIRMATION (max 1 point)
-        if market_analysis.get('volume_profile') == 'HIGH':
-            safety_score += 1
-        
-        # ADDITIONAL STRICT REQUIREMENTS FOR HIGH SCORES
-        # Penalty for weak conditions
-        rsi = market_analysis.get('rsi', 50)
-        if rsi > 75 or rsi < 25:  # Extreme RSI = risky
-            safety_score -= 1
-        
-        volatility = market_analysis.get('volatility', 'NORMAL')
-        if volatility == 'HIGH':  # High volatility = more risk
-            safety_score -= 1
-        
-        # BONUS for exceptional conditions (to reach 9-10)
-        exceptional_bonus = 0
-        
-        # Perfect trend + confidence combination
-        if (regime.regime_strength >= 0.9 and confidence_score >= 0.9 and 
-            risk_reward_ratio >= 3.5 and market_analysis.get('volume_profile') == 'HIGH'):
-            exceptional_bonus += 1  # Can reach score 10
-        
-        # Near perfect conditions
-        elif (regime.regime_strength >= 0.85 and confidence_score >= 0.85 and 
-              risk_reward_ratio >= 3.0):
-            exceptional_bonus += 0.5  # Can reach score 9
-        
-        safety_score += exceptional_bonus
-        
-        # STRICT CAPS: Score 9-10 should be EXTREMELY RARE
-        # Score 1-5: Poor to Fair quality (50-70% win rate)
-        # Score 6-7: Good quality (70-80% win rate)  
-        # Score 8: High quality (80-85% win rate)
-        # Score 9: Exceptional quality (90-95% win rate) - RARE
-        # Score 10: Perfect conditions (95%+ win rate) - EXTREMELY RARE
-        
-        safety_score = max(1, min(10, round(safety_score)))
-        
-        # Check minimum safety requirement
-        if safety_score < min_safety:
-            return None
         
         # Step 10: PORTFOLIO RISK CHECK - Professional institutional controls
         can_open, portfolio_message = self.portfolio_risk_manager.can_open_position(
@@ -1025,6 +1020,7 @@ class TradingGUI:
                     'liquidation_price': liquidation_price,
                     'safety_score': safety_score,
                     'timestamp': datetime.now(),
+                    'mmr_mode': 'approx',  # v4.2.1: Indicate liquidation calculations are approximate
                     # Add missing UI keys with defaults
                     'leverage': max_leverage,
                     'position_size_usdt': 0,
@@ -1067,6 +1063,7 @@ class TradingGUI:
                     'liquidation_price': liquidation_price,
                     'safety_score': safety_score,
                     'timestamp': datetime.now(),
+                    'mmr_mode': 'approx',  # v4.2.1: Indicate liquidation calculations are approximate
                     # Add real calculated UI keys instead of 0s
                     'leverage': max_leverage,
                     'position_size_usdt': position_size_usdt,
@@ -1117,14 +1114,18 @@ class TradingGUI:
             'take_profit_2': take_profit_2,
             'chandelier_stop': chandelier_stop,
             'safety_score': safety_score,
-            'confidence': regime.confidence_level if hasattr(regime, 'confidence_level') else 'MEDIUM',
+            'confidence': regime.get('confidence_level', 'MEDIUM') if isinstance(regime, dict) else (regime.confidence_level if hasattr(regime, 'confidence_level') else 'MEDIUM'),
             'leverage': effective_leverage,
             'position_size_usdt': position_size_usdt,
             'margin_required': margin_required,
             'risk_reward_ratio': risk_reward_ratio,
             'timeframe': timeframe,
             'timestamp': datetime.now(),
-            'market_regime': f"{regime.trend_regime} | {regime.volatility_regime} | Strength: {regime.regime_strength:.2f}",
+            'market_regime': (f"{regime.get('trend_regime', 'UNKNOWN')} | {regime.get('volatility_regime', 'UNKNOWN')} | Strength: {regime_strength:.2f}" 
+                           if isinstance(regime, dict) 
+                           else f"{regime.trend_regime} | {regime.volatility_regime} | Strength: {regime.regime_strength:.2f}" 
+                           if hasattr(regime, 'trend_regime') 
+                           else f"UNKNOWN | UNKNOWN | Strength: {regime_strength:.2f}"),
             'atr_value': atr_value,
             'trade_management_plan': trade_plan,
             'futures_analysis': futures_message,
@@ -1134,6 +1135,7 @@ class TradingGUI:
             'time_stop_candles': time_stop_candles,
             'custom_mode': tp_percent is not None and sl_percent is not None,
             'liquidation_price': liquidation_price,
+            'mmr_mode': 'approx',  # Indicate liquidation calculations are approximate
             'portfolio_approved': True,
             'portfolio_message': portfolio_message,
             # GUI display metrics
@@ -1149,8 +1151,9 @@ class TradingGUI:
         }
 
     def _calculate_liquidation_price(self, entry_price: float, leverage: float, direction: str) -> float:
-        """Calculate estimated liquidation price for Binance Futures"""
-        # Binance maintenance margin rates (approximate)
+        """Calculate approximate liquidation price for Binance Futures (not bracket-based)"""
+        # Binance maintenance margin rates (approximate - simplified model)
+        # Note: Real Binance uses complex bracket system based on position notional value
         if leverage <= 10:
             maintenance_margin_rate = 0.005  # 0.5%
         elif leverage <= 20:
@@ -1169,25 +1172,103 @@ class TradingGUI:
         
         return liquidation_price
     
+    def calculate_enhanced_safety_score(self, confidence_score: float, regime_strength: float, 
+                                      risk_reward_ratio: float, market_analysis: dict, 
+                                      futures_approved: bool = True) -> int:
+        """
+        Calculate enhanced safety score using institutional-grade components (v4.2.1)
+        Single source of truth for all safety scoring
+        """
+        safety_score = 0  # Start from zero
+        
+        # CONFIDENCE COMPONENT (max 3 points)
+        if confidence_score >= 0.9:
+            safety_score += 3  # Excellent confidence
+        elif confidence_score >= 0.8:
+            safety_score += 2  # Good confidence
+        elif confidence_score >= 0.7:
+            safety_score += 1  # Fair confidence
+        
+        # REGIME STRENGTH COMPONENT (max 3 points)
+        if regime_strength >= 0.9:
+            safety_score += 3  # Very strong regime
+        elif regime_strength >= 0.8:
+            safety_score += 2  # Strong regime
+        elif regime_strength >= 0.7:
+            safety_score += 1  # Medium regime
+        
+        # RISK/REWARD COMPONENT (max 2 points)
+        if risk_reward_ratio >= 3.0:
+            safety_score += 2  # Excellent R/R
+        elif risk_reward_ratio >= 2.5:
+            safety_score += 1  # Good R/R
+            
+        # FUTURES APPROVAL (max 1 point)
+        if futures_approved:
+            safety_score += 1
+            
+        # VOLUME PROFILE (max 1 point)
+        if market_analysis.get('volume_profile') == 'HIGH':
+            safety_score += 1
+            
+        # PENALTIES
+        rsi = market_analysis.get('rsi', 50)
+        if rsi > 75 or rsi < 25:  # Extreme RSI = risky
+            safety_score -= 1
+            
+        volatility = market_analysis.get('volatility', 'NORMAL')
+        if volatility == 'HIGH':  # High volatility = more risk
+            safety_score -= 1
+            
+        # EXCEPTIONAL BONUSES (for scores 9-10)
+        exceptional_bonus = 0
+        if (regime_strength >= 0.9 and confidence_score >= 0.9 and 
+            risk_reward_ratio >= 3.5 and market_analysis.get('volume_profile') == 'HIGH'):
+            exceptional_bonus += 1  # Can reach score 10
+        elif (regime_strength >= 0.85 and confidence_score >= 0.85 and 
+              risk_reward_ratio >= 3.0):
+            exceptional_bonus += 0.5  # Can reach score 9
+            
+        safety_score += exceptional_bonus
+        
+        # Clamp to 1-10 range
+        return max(1, min(10, round(safety_score)))
+
     def add_position_to_portfolio(self, signal: dict, balance: float):
-        """Add confirmed position to portfolio tracking"""        
+        """Add confirmed position to portfolio tracking"""
+        # v4.2.1: Ensure session state is properly initialized
+        st.session_state.setdefault('portfolio_positions', [])
+        
         if signal.get('portfolio_blocked') or signal.get('liquidation_blocked'):
             st.warning("⚠️ Position blocked from being added to portfolio")
             return False
             
-        # Create position dict 
+        # v4.2.1: Calculate all required fields for position tracking with safe access
+        position_size_usdt = safe_get_signal_field(signal, 'position_size_usdt', 1000.0)
+        leverage = safe_get_signal_field(signal, 'leverage', 20)
+        entry_price = safe_get_signal_field(signal, 'entry_price', 0.0)
+        stop_loss = safe_get_signal_field(signal, 'stop_loss', entry_price * 0.98)
+        
+        margin_required = signal.get('margin_required', position_size_usdt / leverage)
+        risk_amount = position_size_usdt * abs(entry_price - stop_loss) / entry_price if entry_price > 0 else 0
+        risk_percent = (risk_amount / balance) * 100 if balance > 0 else 0
+        
+        # Create position dict with all required fields using safe access
         position_dict = {
-            'symbol': signal['symbol'],
-            'direction': signal['direction'],
-            'entry_price': signal['entry_price'],
-            'position_size_usdt': signal['position_size_usdt'],
-            'leverage': signal['leverage'],
-            'stop_loss': signal['stop_loss'],
-            'take_profit_1': signal['take_profit_1'],
-            'risk_amount': signal['position_size_usdt'] * abs(signal['entry_price'] - signal['stop_loss']) / signal['entry_price'],
+            'symbol': safe_get_signal_field(signal, 'symbol', 'UNKNOWN'),
+            'direction': safe_get_signal_field(signal, 'direction', 'LONG'),
+            'entry_price': entry_price,
+            'position_size_usdt': position_size_usdt,
+            'leverage': leverage,
+            'stop_loss': stop_loss,
+            'take_profit_1': safe_get_signal_field(signal, 'take_profit_1', entry_price * 1.04),
+            'risk_amount': risk_amount,
+            'risk_percent': risk_percent,
+            'margin_required': margin_required,
+            'notional_value': position_size_usdt,
             'timestamp': time.time(),
-            'timeframe': signal['timeframe'],
-            'safety_score': signal['safety_score']
+            'timeframe': safe_get_signal_field(signal, 'timeframe', '1h'),
+            'safety_score': safe_get_signal_field(signal, 'safety_score', 5)
         }
         
         # Add to session state
@@ -1468,17 +1549,17 @@ def main():
         take_profit_percent = None
         stop_loss_percent = None
     
-    auto_scan = st.sidebar.checkbox("🔄 Auto Scan (Top 5 Signals)", help="Scan all coins and show top 5 highest safety score signals")
+    auto_scan = st.sidebar.checkbox("🔄 Auto Scan (0-5 Signals)", help="Scan all coins and show up to 5 highest safety score signals (may return 0-5 depending on quality bars)")
     
     # Portfolio Risk Management Display
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 🏦 Portfolio Risk Management")
     
     if balance > 0:
-        # Calculate portfolio metrics from session state
-        session_positions = st.session_state.portfolio_positions if 'portfolio_positions' in st.session_state else []
+        # Calculate portfolio metrics from session state (v4.2.1 safe access)
+        session_positions = st.session_state.setdefault('portfolio_positions', [])
         position_count = len(session_positions)
-        max_positions = 3
+        max_positions = gui.portfolio_risk_manager.max_positions  # Use consistent value from PortfolioRiskManager
         
         # Calculate risk from session positions
         total_risk = sum(pos.get('risk_amount', 0) for pos in session_positions) if session_positions else 0
@@ -1500,11 +1581,11 @@ def main():
         # Current portfolio status
         if position_count > 0:
             total_notional = sum(pos.get('position_size_usdt', 0) for pos in session_positions)
-            avg_leverage = total_notional / balance if balance > 0 else 0
+            exposure_multiple = total_notional / balance if balance > 0 else 0
             st.sidebar.success(f"""
 **📈 Active Portfolio:**
 • Total Risk: ${total_risk:.0f} ({risk_percentage:.1%})
-• Avg Leverage: {avg_leverage:.1f}x
+• Exposure: {exposure_multiple:.1f}x
 • Positions: {position_count}
             """)
         else:
@@ -1516,7 +1597,7 @@ def main():
             st.write(f"• Max per position: 1.0%")
             st.write(f"• Max correlated: 3.0%")
             st.write(f"• Max positions: {max_positions}")
-            st.write(f"• Max avg leverage: 50x")
+            st.write(f"• Max exposure multiple: 50x")
             
         # Clear positions button (for demo/testing)
         if st.sidebar.button("🗑️ Clear All Positions"):
@@ -1541,7 +1622,7 @@ def main():
         st.markdown("## 📊 Multi-Market Dashboard")
         
         if auto_scan_mode:
-            st.info("🏆 **Top Signals Mode**: Analyzing all coins for the 5 highest safety score signals...")
+            st.info("🏆 **Quality Signals Mode**: Analyzing all coins for highest safety score signals (0-5 depending on quality bars)...")
         
         # Use the determined symbols for display
         selected_symbols = symbols_for_analysis
@@ -1923,7 +2004,7 @@ Leverage: {signal['leverage']}x
             # Display top signals for auto-scan mode
             if auto_scan_mode:
                 if all_signals:
-                    # Sort by safety score descending and take top 5
+                    # Sort by safety score descending and take up to 5 (may be fewer)
                     top_signals = sorted(all_signals, key=lambda x: x[1]['safety_score'], reverse=True)[:5]
                     
                     st.success(f"🎯 **Top {len(top_signals)} Highest Safety Signals** (from {len(all_signals)} analyzed)")
@@ -2021,18 +2102,22 @@ Leverage: {signal.get('leverage', 'N/A')}x
                     st.warning("⏳ No signals found in current market scan.")
                     st.info(f"💡 **Analyzed {len(gui.supported_symbols)} coins** - Try again in a few minutes as market conditions change.")
             
-            if signals_found == 0 and not auto_scan_mode:
-                st.warning("⏳ No trading signals generated. Try lowering the safety score or different timeframes.")
-                
-                # Show debug summary
-                with st.expander("🔍 Debug Information", expanded=False):
-                    st.write("**Market Analysis Summary:**")
-                    for info in debug_info:
-                        st.write(info)
-                    st.write("\n**Tips to get more signals:**")
-                    st.write("• Lower the minimum safety score to 3-4")
-                    st.write("• Try different timeframes (15m for more signals)")
-                    st.write("• Check during high volatility periods")
+            # v4.2.1: Auto-scan can return 0 valid signals (no forced top 5)
+            if signals_found == 0:
+                if auto_scan_mode:
+                    st.info("🔍 **Auto-scan complete**: No signals meet current quality standards. Try again as market conditions change.")
+                else:
+                    st.warning("⏳ No trading signals generated. Try lowering the safety score or different timeframes.")
+                    
+                    # Show debug summary for manual mode only
+                    with st.expander("🔍 Debug Information", expanded=False):
+                        st.write("**Market Analysis Summary:**")
+                        for info in debug_info:
+                            st.write(info)
+                        st.write("\n**Tips to get more signals:**")
+                        st.write("• Lower the minimum safety score to 3-4")
+                        st.write("• Try different timeframes (15m for more signals)")
+                        st.write("• Check during high volatility periods")
             else:
                 st.success(f"✅ Generated {signals_found} trading signals!")
         
@@ -2123,6 +2208,7 @@ Leverage: {signal.get('leverage', 'N/A')}x
     <div style="text-align: center; color: #666;">
         <p>⚠️ <strong>Risk Warning:</strong> Trading cryptocurrencies involves substantial risk. Never risk more than you can afford to lose.</p>
         <p>💡 This tool is for educational purposes. Always do your own research before making trading decisions.</p>
+        <p><small><strong>Last Updated:</strong> Sep 27, 2025 – <strong>Version:</strong> 4.2.1</small></p>
     </div>
     """, unsafe_allow_html=True)
 
