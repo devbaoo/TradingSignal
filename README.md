@@ -31,19 +31,22 @@
 ### 📊 **Advanced Trading Analytics System**
 
 **Real-Time Performance Tracking:**
+
 - **Auto Signal Tracking**: Generated signals automatically tracked in analytics database
 - **Trade Lifecycle Management**: Complete tracking từ signal generation đến final outcomes
 - **Real-Time P&L**: Live profit/loss calculation với mark-to-market pricing
 - **Success Rate Analysis**: Performance breakdown by safety scores (1-10) và timeframes
 
 **Interactive Analytics Dashboard:**
+
 - **📈 Overview Dashboard**: Daily P&L charts, cumulative performance, key metrics
-- **📋 Trade History**: Complete filterable trade records với CSV export capability  
+- **📋 Trade History**: Complete filterable trade records với CSV export capability
 - **🎯 SL/TP Statistics**: Detailed success rate analysis by safety scores và timeframes
 - **📅 Monthly Performance**: Daily breakdown với best/worst day identification
 - **👤 User Authentication**: Secure login system với multi-user support
 
 **Professional Analytics Features:**
+
 - **Performance Metrics**: Win rates, profit factors, Sharpe ratios, max drawdowns
 - **Risk Analysis**: Portfolio exposure, correlation analysis, risk utilization tracking
 - **Outcome Classification**: SL hits, TP1/2/3 hits, manual closes với success rates
@@ -187,10 +190,12 @@ chmod +x start_gui.sh && ./start_gui.sh
 ### 5. **Access Professional Interfaces**
 
 - **Main Trading Interface**: http://localhost:8501
+
   - Features: Signal generation, portfolio management, real-time charts
   - Includes: Built-in analytics tab với integrated performance tracking
 
 - **Dedicated Analytics Dashboard**: http://localhost:8502 (optional)
+
   - Features: Advanced analytics, user authentication, detailed reporting
   - Use case: Deep performance analysis, trade history management
 
@@ -199,6 +204,7 @@ chmod +x start_gui.sh && ./start_gui.sh
 ### 6. **Complete Usage Guide**
 
 #### **Basic Signal Generation:**
+
 1. **Generate Signal**: Select symbol(s) or use Auto-Scan mode
 2. **Review Signal**: Check safety score, R/R ratio, ROI projections
 3. **Add to Portfolio**: Click "➕ Add to Portfolio" button
@@ -209,12 +215,13 @@ chmod +x start_gui.sh && ./start_gui.sh
 5. **Copy Trade Setup**: Use "📋 Copy Setup" for manual execution
 
 #### **Analytics Integration (New in v4.3.0):**
+
 1. **Access Analytics**: Click "Analytics" tab in main interface
 2. **User Registration**: Create account or login for tracking
    - Secure authentication với password hashing
    - Session management với 24-hour expiry
 3. **Auto-Tracking**: Generated signals automatically saved to analytics database
-4. **Performance Review**: 
+4. **Performance Review**:
    - **Overview**: Daily P&L charts và cumulative performance
    - **Trade History**: Complete filterable records với CSV export
    - **SL/TP Stats**: Success rates by safety scores và timeframes
@@ -222,6 +229,7 @@ chmod +x start_gui.sh && ./start_gui.sh
 5. **Data Export**: Download complete trade history for external analysis
 
 #### **Advanced Analytics Features:**
+
 - **Real-Time Tracking**: Live P&L updates as market prices change
 - **Success Rate Analysis**: Performance breakdown by safety scores (1-10)
 - **Timeframe Analysis**: Compare performance across 1h, 4h, 1d timeframes
@@ -382,7 +390,7 @@ TradingInsight/
 users (id, username, email, password_hash, created_at, subscription_tier)
 
 -- Comprehensive trade tracking
-trades (id, user_id, symbol, direction, entry_price, exit_price, 
+trades (id, user_id, symbol, direction, entry_price, exit_price,
         position_size_usdt, leverage, stop_loss, take_profit_1/2/3,
         status, outcome, pnl_usdt, roi_percent, safety_score,
         risk_reward_ratio, timeframe, market_regime, entry_time, exit_time)
@@ -586,18 +594,21 @@ AGGRESSIVE: 2.0x stop, 5.0x TP → 5.0% price move × 20x = 100% ROI
 ### **Analytics Features Summary**
 
 **Authentication & Security:**
+
 - User registration với email validation
 - PBKDF2 password hashing với salts
 - 24-hour session tokens
 - Local SQLite database (no cloud dependencies)
 
 **Performance Tracking:**
+
 - Real-time trade tracking với P&L updates
 - Success rate analysis by safety scores (1-10)
 - Timeframe performance comparison (1h, 4h, 1d)
 - Outcome distribution (SL vs TP1/2/3 hits)
 
 **Reporting & Analysis:**
+
 - Interactive performance charts với Plotly
 - Daily/monthly performance breakdowns
 - CSV export for external analysis
@@ -605,6 +616,7 @@ AGGRESSIVE: 2.0x stop, 5.0x TP → 5.0% price move × 20x = 100% ROI
 - Risk metrics và portfolio analysis
 
 **Integration:**
+
 - Seamless integration với main trading interface
 - Auto-tracking của generated signals
 - Real-time portfolio synchronization

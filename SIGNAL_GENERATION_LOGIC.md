@@ -7,6 +7,7 @@
 ### ✅ **Advanced Analytics Integration**
 
 **Complete Trading Analytics System:**
+
 - **🔐 User Authentication**: Secure login system với PBKDF2 password hashing
 - **📊 Real-Time Tracking**: Auto-track generated signals để build performance database
 - **📈 Performance Analytics**: Success rate analysis by safety scores, timeframes, outcomes
@@ -15,6 +16,7 @@
 - **🔄 Integration**: Seamless connection between signal generation và analytics tracking
 
 **Analytics Features:**
+
 - **Trade Lifecycle Tracking**: From signal generation → execution → outcome
 - **Performance Metrics**: Win rates, profit factors, risk-adjusted returns, drawdowns
 - **Interactive Dashboards**: Plotly-powered charts với filtering và export capabilities
@@ -22,6 +24,7 @@
 - **Data Security**: Local SQLite database, encrypted authentication, session management
 
 **Signal Enhancement:**
+
 - **Auto-Tracking**: Generated signals automatically saved to analytics database
 - **Quality Validation**: Historical performance data validates safety score accuracy
 - **Outcome Prediction**: Success rate estimates based on signal characteristics
@@ -2321,7 +2324,7 @@ def track_generated_signal(signal_data: Dict) -> bool:
     """Auto-track generated signals to analytics database"""
     if not analytics_integrator.enabled or not analytics_integrator.current_user_id:
         return False
-    
+
     try:
         # Convert signal to trade format
         trade_data = {
@@ -2340,7 +2343,7 @@ def track_generated_signal(signal_data: Dict) -> bool:
             'market_regime': signal_data.get('regime'),
             'strategy_version': '4.3.0'
         }
-        
+
         return trade_tracker.add_trade(analytics_integrator.current_user_id, trade_data)
     except Exception as e:
         return False
@@ -2359,42 +2362,42 @@ CREATE TABLE trades (
     exit_price REAL,
     position_size_usdt REAL NOT NULL,
     leverage INTEGER NOT NULL,
-    
-    -- Risk management levels  
+
+    -- Risk management levels
     stop_loss REAL,
     take_profit_1 REAL,
     take_profit_2 REAL,
     take_profit_3 REAL,
-    
+
     -- Status and outcome tracking
     status TEXT DEFAULT 'open',        -- open/closed/cancelled
     outcome TEXT,                      -- sl_hit/tp1_hit/tp2_hit/tp3_hit/manual_close
-    
+
     -- Performance metrics
     pnl_usdt REAL DEFAULT 0,
     pnl_percent REAL DEFAULT 0,
     roi_percent REAL DEFAULT 0,        -- ROI on margin
-    
+
     -- Risk analytics
     risk_reward_ratio REAL,
     safety_score INTEGER,
     margin_required REAL,
     liquidation_price REAL,
-    
+
     -- Time tracking
     entry_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     exit_time TIMESTAMP,
     duration_minutes INTEGER,
-    
+
     -- Market context
     timeframe TEXT,
     market_regime TEXT,
     volatility_level TEXT,
-    
+
     -- Version tracking
     signal_source TEXT DEFAULT 'trading_insight',
     strategy_version TEXT DEFAULT '4.3.0',
-    
+
     FOREIGN KEY (user_id) REFERENCES users (id)
 );
 
@@ -2403,19 +2406,19 @@ CREATE TABLE daily_performance (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     date DATE NOT NULL,
-    
+
     -- Trade statistics
     total_trades INTEGER DEFAULT 0,
     winning_trades INTEGER DEFAULT 0,
     losing_trades INTEGER DEFAULT 0,
-    
+
     -- Performance metrics
     gross_pnl_usdt REAL DEFAULT 0,
     net_pnl_usdt REAL DEFAULT 0,
     win_rate REAL DEFAULT 0,
     profit_factor REAL DEFAULT 0,
     max_drawdown REAL DEFAULT 0,
-    
+
     UNIQUE(user_id, date),
     FOREIGN KEY (user_id) REFERENCES users (id)
 );
@@ -2428,55 +2431,55 @@ def get_sl_tp_statistics(user_id: int, days: int = 30) -> Dict:
     """Get comprehensive SL/TP success rate analysis"""
     try:
         conn = db.get_connection()
-        
+
         query = """
-            SELECT 
+            SELECT
                 outcome,
                 safety_score,
                 timeframe,
                 COUNT(*) as count
-            FROM trades 
+            FROM trades
             WHERE user_id = ?
             AND entry_time >= date('now', '-{} days')
             AND status = 'closed'
             AND outcome IS NOT NULL
             GROUP BY outcome, safety_score, timeframe
         """.format(days)
-        
+
         df = pd.read_sql_query(query, conn, params=[user_id])
         conn.close()
-        
+
         # Calculate success rates by safety score
         safety_stats = {}
         for score in range(1, 11):
             score_trades = df[df['safety_score'] == score]['count'].sum()
-            score_tp = df[(df['safety_score'] == score) & 
+            score_tp = df[(df['safety_score'] == score) &
                         df['outcome'].str.contains('tp', case=False, na=False)]['count'].sum()
-            
+
             if score_trades > 0:
                 safety_stats[score] = {
                     'trades': score_trades,
                     'success_rate': (score_tp / score_trades * 100)
                 }
-        
+
         # Calculate success rates by timeframe
         timeframe_stats = {}
         for tf in df['timeframe'].unique():
             if pd.isna(tf):
                 continue
             tf_trades = df[df['timeframe'] == tf]['count'].sum()
-            tf_tp = df[(df['timeframe'] == tf) & 
+            tf_tp = df[(df['timeframe'] == tf) &
                      df['outcome'].str.contains('tp', case=False, na=False)]['count'].sum()
-            
+
             timeframe_stats[tf] = {
                 'trades': tf_trades,
                 'success_rate': (tf_tp / tf_trades * 100) if tf_trades > 0 else 0
             }
-        
+
         total_trades = df['count'].sum()
         tp_hits = df[df['outcome'].str.contains('tp', case=False, na=False)]['count'].sum()
         success_rate = (tp_hits / total_trades * 100) if total_trades > 0 else 0
-        
+
         return {
             'total_closed_trades': total_trades,
             'tp_hits': tp_hits,
@@ -2495,11 +2498,11 @@ def get_sl_tp_statistics(user_id: int, days: int = 30) -> Dict:
 def render_analytics_tab():
     """Render integrated analytics tab in main GUI"""
     st.markdown("## 📊 Trading Analytics Dashboard")
-    
+
     # User authentication check
     if not analytics_integrator.initialize_user_session():
         st.warning("🔐 Login required for analytics tracking")
-        
+
         col1, col2 = st.columns(2)
         with col1:
             if st.button("📊 Open Analytics Dashboard", type="primary"):
@@ -2508,24 +2511,24 @@ def render_analytics_tab():
             if st.button("ℹ️ Learn More"):
                 st.info("Analytics tracks your trading performance automatically")
         return
-    
+
     # Get user info
     user_info = st.session_state.get('analytics_user')
     if not user_info:
         st.error("Analytics session expired. Please re-login.")
         return
-    
+
     # Display user status
     st.success(f"✅ Analytics Active: {user_info['username']} ({user_info['subscription_tier']})")
-    
+
     # Get recent performance data
     user_id = user_info['id']
     trades_df = trade_tracker.get_user_trades(user_id, limit=50)
-    
+
     if not trades_df.empty:
         # Key metrics
         closed_trades = trades_df[trades_df['status'] == 'closed']
-        
+
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Total Signals", len(trades_df))
@@ -2545,13 +2548,13 @@ def render_analytics_tab():
         with col4:
             open_trades = len(trades_df[trades_df['status'] == 'open'])
             st.metric("Open Positions", open_trades)
-        
+
         # Recent trade history
         st.markdown("### 📋 Recent Trading History")
-        display_df = trades_df[['symbol', 'direction', 'entry_price', 'safety_score', 
+        display_df = trades_df[['symbol', 'direction', 'entry_price', 'safety_score',
                                'status', 'pnl_usdt', 'entry_time']].head(10)
         st.dataframe(display_df, use_container_width=True)
-        
+
         # Quick actions
         col1, col2 = st.columns(2)
         with col1:
@@ -2561,10 +2564,10 @@ def render_analytics_tab():
             if st.button("📁 Export Trade History"):
                 csv = trades_df.to_csv(index=False)
                 st.download_button("💾 Download CSV", csv, "trading_history.csv")
-    
+
     else:
         st.info("📊 No trading data found. Start generating signals to build your analytics.")
-    
+
     # Link to analytics refresh info
     st.markdown("---")
     st.caption("Analytics data updates automatically when you track new signals from this app.")
@@ -2573,18 +2576,21 @@ def render_analytics_tab():
 ### **Analytics Integration Benefits:**
 
 #### **Performance Tracking:**
+
 - **Historical Success Rates**: Track actual performance of safety scores 1-10
 - **Timeframe Analysis**: Compare 1h vs 4h vs 1d signal effectiveness
 - **Outcome Distribution**: SL hits vs TP1/2/3 hits statistical analysis
 - **Risk-Adjusted Returns**: Sharpe ratios, profit factors, maximum drawdowns
 
 #### **Signal Quality Validation:**
+
 - **Safety Score Accuracy**: Verify that higher scores = higher success rates
-- **Market Regime Performance**: Track which regimes produce best results  
+- **Market Regime Performance**: Track which regimes produce best results
 - **R/R Ratio Effectiveness**: Validate that higher R/R = better outcomes
 - **Leverage Impact Analysis**: Understand leverage effects on profitability
 
 #### **Continuous Improvement:**
+
 - **Strategy Optimization**: Use analytics data to refine signal generation
 - **Parameter Tuning**: Adjust safety score thresholds based on actual results
 - **Risk Management**: Optimize position sizing based on historical performance
