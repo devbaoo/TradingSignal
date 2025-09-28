@@ -76,7 +76,7 @@ def generate_sample_trades(user_id, num_days=30, trades_per_day_range=(2, 8)):
     directions = ['LONG', 'SHORT']
     market_regimes = ['bull_strong', 'bull_weak', 'bear_strong', 'bear_weak', 'sideways']
     volatility_levels = ['low', 'medium', 'high']
-    outcomes = ['sl_hit', 'tp1_hit', 'tp2_hit', 'tp3_hit', 'manual_close']
+    outcomes = ['sl', 'tp1', 'tp2', 'tp3', 'manual']
     
     trades_created = 0
     
@@ -177,20 +177,22 @@ def generate_sample_trades(user_id, num_days=30, trades_per_day_range=(2, 8)):
                         
                         if random.random() < success_probability:
                             # Successful trade
-                            outcome = random.choices(
-                                ['tp1_hit', 'tp2_hit', 'tp3_hit'],
+                            closed_reason = random.choices(
+                                ['tp1', 'tp2', 'tp3'],
                                 weights=[0.5, 0.3, 0.2]
                             )[0]
+                            outcome_category = 'win'
                             
-                            if outcome == 'tp1_hit':
+                            if closed_reason == 'tp1':
                                 exit_price = tp1
-                            elif outcome == 'tp2_hit':
+                            elif closed_reason == 'tp2':
                                 exit_price = tp2
                             else:
                                 exit_price = tp3
                         else:
                             # Failed trade
-                            outcome = 'sl_hit'
+                            closed_reason = 'sl'
+                            outcome_category = 'loss'
                             exit_price = stop_loss
                         
                         # Random exit time (few hours to few days later)
@@ -199,7 +201,11 @@ def generate_sample_trades(user_id, num_days=30, trades_per_day_range=(2, 8)):
                         )
                         
                         trade_tracker.update_trade_outcome(
-                            trade_id, exit_price, outcome, exit_time
+                            trade_id,
+                            exit_price,
+                            outcome_category,
+                            closed_reason,
+                            exit_time
                         )
                     
                     conn.close()

@@ -27,7 +27,7 @@ from src.portfolio_risk_manager import PortfolioRiskManager
 from src.circuit_breaker import CircuitBreakerManager
 
 # Import constants for v4.2.1 standardization
-from constants import MIN_RR, get_regime_strength, safe_get_signal_field
+from constants import MIN_RR, get_regime_strength, normalize_regime, safe_get_signal_field
 
 # Analytics Integration
 try:
@@ -805,9 +805,8 @@ class TradingGUI:
             
             # Quick safety score
             confidence_score = latest_signal.get('confidence', 0.5)
-            regime = latest_signal.get('regime')
-            # v4.2.1: Use safe regime access helper
-            regime_strength = get_regime_strength(regime)
+            regime_info = normalize_regime(latest_signal.get('regime'))
+            regime_strength = regime_info['strength']
             
             # v4.2.1: Use only enhanced safety score calculation
             market_analysis = self.analyze_market(df)
@@ -850,7 +849,8 @@ class TradingGUI:
                 'safety_score': safety_score,
                 'risk_reward_ratio': risk_reward_ratio,
                 'confidence': confidence_score,
-                'regime': regime_strength,
+                'regime': regime_info,
+                'regime_strength': regime_strength,
                 # Real calculated UI compatibility keys (not placeholders)
                 'leverage': leverage,
                 'position_size_usdt': position_size_usdt,
@@ -1095,7 +1095,8 @@ class TradingGUI:
         # Get the latest signal
         latest_signal = signals[-1]
         signal_direction = latest_signal['direction']
-        regime = latest_signal['regime']
+        regime_info = normalize_regime(latest_signal.get('regime'))
+        regime_strength = regime_info['strength']
         
         # Step 3: Check futures approval for this specific direction
         if not self.futures_data_provider.get_futures_signal_filter(symbol, signal_direction)[0]:
@@ -1162,11 +1163,7 @@ class TradingGUI:
             )
             
         else:
-            # PROFESSIONAL ATR-based TP/SL with dynamic R/R
-            # Handle both object and dict regime types
-            # v4.2.1: Use safe regime access helper
-            regime_strength = get_regime_strength(regime)
-                
+            # PROFESSIONAL ATR-based TP/SL với regime đã chuẩn hóa
             risk_level = 'CONSERVATIVE' if regime_strength < 0.6 else 'MODERATE'
             if regime_strength > 0.8:
                 risk_level = 'AGGRESSIVE'
@@ -1192,9 +1189,6 @@ class TradingGUI:
         
         # Step 5: Calculate leverage first (needed for leveraged returns calculation)
         if tp_percent is None:  # ATR mode - sử dụng leverage thông minh
-            # v4.2.1: Use safe regime access helper
-            regime_strength = get_regime_strength(regime)
-            
             # Cho phép leverage cao hơn trong ATR mode vì đã có risk management tốt
             if regime_strength > 0.7 and latest_signal['confidence'] > 0.7:
                 max_leverage = min(selected_leverage, 25)  # High confidence = higher leverage
@@ -1220,8 +1214,6 @@ class TradingGUI:
         
         # Step 7: v4.2.1 - Use only enhanced safety score calculation (single method)
         confidence_score = latest_signal.get('confidence', 0.5)
-        # v4.2.1: Use safe regime access helper
-        regime_strength = get_regime_strength(regime)
         
         # Step 8: Calculate enhanced safety score using single method (v4.2.1)
         safety_score = self.calculate_enhanced_safety_score(
@@ -1422,18 +1414,16 @@ class TradingGUI:
             'take_profit_2': take_profit_2,
             'chandelier_stop': chandelier_stop,
             'safety_score': safety_score,
-            'confidence': regime.get('confidence_level', 'MEDIUM') if isinstance(regime, dict) else (regime.confidence_level if hasattr(regime, 'confidence_level') else 'MEDIUM'),
+            'confidence': confidence_score,
+            'regime': regime_info,
+            'regime_strength': regime_strength,
             'leverage': effective_leverage,
             'position_size_usdt': position_size_usdt,
             'margin_required': margin_required,
             'risk_reward_ratio': risk_reward_ratio,
             'timeframe': timeframe,
             'timestamp': datetime.now(),
-            'market_regime': (f"{regime.get('trend_regime', 'UNKNOWN')} | {regime.get('volatility_regime', 'UNKNOWN')} | Strength: {regime_strength:.2f}" 
-                           if isinstance(regime, dict) 
-                           else f"{regime.trend_regime} | {regime.volatility_regime} | Strength: {regime.regime_strength:.2f}" 
-                           if hasattr(regime, 'trend_regime') 
-                           else f"UNKNOWN | UNKNOWN | Strength: {regime_strength:.2f}"),
+            'market_regime': f"{regime_info.get('trend_regime', 'UNKNOWN')} | {regime_info.get('volatility_regime', 'UNKNOWN')} | Strength: {regime_strength:.2f}",
             'atr_value': atr_value,
             'trade_management_plan': trade_plan,
             'futures_analysis': futures_message,
@@ -1655,43 +1645,55 @@ class TradingGUI:
             if take_profit is None or stop_loss is None:
                 continue
 
-            outcome = None
+            outcome_category = None
+            closed_reason = None
             if direction == 'LONG':
                 if current_price >= take_profit:
-                    outcome = 'tp1_hit'
+                    closed_reason = 'tp1'
+                    outcome_category = 'win'
                 elif current_price <= stop_loss:
-                    outcome = 'sl_hit'
+                    closed_reason = 'sl'
+                    outcome_category = 'loss'
             else:  # SHORT
                 if current_price <= take_profit:
-                    outcome = 'tp1_hit'
+                    closed_reason = 'tp1'
+                    outcome_category = 'win'
                 elif current_price >= stop_loss:
-                    outcome = 'sl_hit'
-
-            if not outcome:
+                    closed_reason = 'sl'
+                    outcome_category = 'loss'
+            
+            if not closed_reason:
                 continue
-
+            
             trade['status'] = 'closed'
-            trade['outcome'] = outcome
+            trade['outcome'] = outcome_category
+            trade['closed_reason'] = closed_reason
             trade['exit_price'] = current_price
             trade['closed_at'] = datetime.now().isoformat()
-
+            
             trade_id = trade.get('analytics_trade_id')
             if ANALYTICS_AVAILABLE and trade_id:
-                analytics_integrator.update_trade_outcome_by_id(trade_id, current_price, outcome)
+                analytics_integrator.update_trade_outcome_by_id(
+                    trade_id,
+                    current_price,
+                    outcome_category,
+                    closed_reason
+                )
 
             tracked_list = st.session_state.get('tracked_trades', [])
             for tracked in tracked_list:
                 if tracked.get('trade_id') == trade_id:
                     tracked.update({
                         'status': 'closed',
-                        'outcome': outcome,
+                        'outcome': outcome_category,
+                        'closed_reason': closed_reason,
                         'exit_price': current_price,
                         'closed_at': trade['closed_at']
                     })
                     break
 
             if not trade.get('auto_notified'):
-                notifications.append(f"✅ {symbol}: {outcome.replace('_', ' ')} @ {current_price:,.4f}")
+                notifications.append(f"✅ {symbol}: {closed_reason.upper()} @ {current_price:,.4f}")
                 trade['auto_notified'] = True
 
         for note in notifications:
@@ -2625,6 +2627,7 @@ Leverage: {signal.get('leverage', 'N/A')}x
                         st.write(f"**Timeframe:** {trade.get('timeframe', 'N/A')}")
                         if status == 'closed':
                             st.write(f"**Outcome:** {trade.get('outcome', 'N/A')}")
+                            st.write(f"**Closed Reason:** {trade.get('closed_reason', 'N/A')}")
                             st.write(f"**Exit Price:** {trade.get('exit_price', 'N/A')}")
 
                     if status != 'closed':
@@ -2637,9 +2640,9 @@ Leverage: {signal.get('leverage', 'N/A')}x
                                     value=float(trade.get('take_profit_1') or trade.get('entry_price') or 0.0),
                                     key=f"exit_price_input_{analytics_id}_{idx}"
                                 )
-                                outcome = st.selectbox(
-                                    "Outcome",
-                                    options=["tp1_hit", "tp2_hit", "tp3_hit", "sl_hit", "manual_close"],
+                                closed_reason_choice = st.selectbox(
+                                    "Closed Reason",
+                                    options=["tp1", "tp2", "tp3", "sl", "manual"],
                                     index=0,
                                     key=f"outcome_select_{analytics_id}_{idx}"
                                 )
@@ -2649,10 +2652,21 @@ Leverage: {signal.get('leverage', 'N/A')}x
                                 if exit_price <= 0:
                                     st.warning("⚠️ Exit price phải lớn hơn 0")
                                 else:
-                                    success = analytics_integrator.update_trade_outcome_by_id(analytics_id, exit_price, outcome)
+                                    outcome_category = (
+                                        'win' if closed_reason_choice in {'tp1', 'tp2', 'tp3'}
+                                        else 'loss' if closed_reason_choice == 'sl'
+                                        else 'breakeven'
+                                    )
+                                    success = analytics_integrator.update_trade_outcome_by_id(
+                                        analytics_id,
+                                        exit_price,
+                                        outcome_category,
+                                        closed_reason_choice
+                                    )
                                     if success:
                                         trade['status'] = 'closed'
-                                        trade['outcome'] = outcome
+                                        trade['outcome'] = outcome_category
+                                        trade['closed_reason'] = closed_reason_choice
                                         trade['exit_price'] = exit_price
                                         trade['closed_at'] = datetime.now().isoformat()
 

@@ -9,6 +9,8 @@ import talib
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
+from constants import normalize_regime
+
 
 @dataclass
 class MarketRegime:
@@ -305,25 +307,27 @@ class ProfessionalMomentumStrategy:
             short_conditions = self._check_short_conditions(current, regime)
             
             if long_conditions['signal'] and regime.regime_strength > 0.5:
+                regime_dict = normalize_regime(regime)
                 signals.append({
                     'timestamp': data.index[i],
                     'direction': 'LONG',
                     'entry_price': current['close'],
                     'confidence': long_conditions['confidence'],
-                    'regime': regime,
+                    'regime': regime_dict,
                     'conditions_met': long_conditions['conditions'],
-                    'strength_score': regime.regime_strength
+                    'strength_score': regime_dict['strength']
                 })
             
             elif short_conditions['signal'] and regime.regime_strength > 0.5:
+                regime_dict = normalize_regime(regime)
                 signals.append({
                     'timestamp': data.index[i],
                     'direction': 'SHORT',
                     'entry_price': current['close'],
                     'confidence': short_conditions['confidence'],
-                    'regime': regime,
+                    'regime': regime_dict,
                     'conditions_met': short_conditions['conditions'],
-                    'strength_score': regime.regime_strength
+                    'strength_score': regime_dict['strength']
                 })
         
         return signals
