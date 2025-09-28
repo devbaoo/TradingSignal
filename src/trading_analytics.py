@@ -29,7 +29,7 @@ class TradingAnalyticsDB:
         """Initialize database with all required tables"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         # Users table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -76,7 +76,8 @@ class TradingAnalyticsDB:
                 
                 -- Status tracking
                 status TEXT DEFAULT 'open', -- open/closed/cancelled
-                outcome TEXT, -- sl_hit/tp1_hit/tp2_hit/tp3_hit/manual_close
+                outcome TEXT, -- win/loss/breakeven
+                closed_reason TEXT, -- tp1/tp2/tp3/sl/manual
                 
                 -- Performance metrics
                 pnl_usdt REAL DEFAULT 0,
@@ -180,11 +181,59 @@ class TradingAnalyticsDB:
         """)
         
         conn.commit()
+        
+        # Ensure schema migrations for outcome normalization
+        self._ensure_column(cursor, 'trades', 'closed_reason', 'TEXT')
+        self._migrate_trade_outcomes(cursor)
+        
+        conn.commit()
         conn.close()
     
     def get_connection(self):
         """Get database connection"""
         return sqlite3.connect(self.db_path)
+
+    def _ensure_column(self, cursor, table: str, column: str, definition: str) -> None:
+        """Add a column to the table if it does not exist."""
+        cursor.execute(f"PRAGMA table_info({table})")
+        columns = [row[1] for row in cursor.fetchall()]
+        if column not in columns:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def _migrate_trade_outcomes(self, cursor) -> None:
+        """Normalize existing outcome data to the new schema (idempotent)."""
+        cursor.execute("PRAGMA table_info(trades)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if 'closed_reason' not in columns:
+            return
+
+        # Populate closed_reason where missing based on legacy outcome values
+        cursor.execute(
+            """
+            UPDATE trades
+            SET closed_reason = CASE
+                WHEN (closed_reason IS NULL OR closed_reason = '') AND outcome IN ('tp1_hit', 'tp1') THEN 'tp1'
+                WHEN (closed_reason IS NULL OR closed_reason = '') AND outcome IN ('tp2_hit', 'tp2') THEN 'tp2'
+                WHEN (closed_reason IS NULL OR closed_reason = '') AND outcome IN ('tp3_hit', 'tp3') THEN 'tp3'
+                WHEN (closed_reason IS NULL OR closed_reason = '') AND outcome IN ('sl_hit', 'sl') THEN 'sl'
+                WHEN (closed_reason IS NULL OR closed_reason = '') AND outcome IN ('manual_close', 'manual', 'breakeven') THEN 'manual'
+                ELSE closed_reason
+            END
+            """
+        )
+
+        # Normalize outcome column to win/loss/breakeven taxonomy
+        cursor.execute(
+            """
+            UPDATE trades
+            SET outcome = CASE
+                WHEN outcome IN ('tp1_hit', 'tp2_hit', 'tp3_hit', 'tp1', 'tp2', 'tp3') THEN 'win'
+                WHEN outcome IN ('sl_hit', 'sl') THEN 'loss'
+                WHEN outcome IN ('manual_close', 'manual', 'breakeven') THEN 'breakeven'
+                ELSE outcome
+            END
+            """
+        )
 
 
 class UserAuth:
@@ -332,6 +381,99 @@ class TradeTracker:
     def __init__(self, db: TradingAnalyticsDB):
         self.db = db
     
+    @staticmethod
+    def _normalize_outcome_inputs(outcome: Optional[str], 
+                                  closed_reason: Optional[str], 
+                                  pnl_percent: float) -> Tuple[str, str]:
+        """Map legacy outcome values into standardized fields."""
+
+        outcome_val = (outcome or '').strip().lower()
+        closed_val = (closed_reason or '').strip().lower()
+
+        closed_aliases = {
+            'tp1_hit': 'tp1',
+            'tp_1': 'tp1',
+            'take_profit_1': 'tp1',
+            'tp1': 'tp1',
+            'tp2_hit': 'tp2',
+            'tp_2': 'tp2',
+            'take_profit_2': 'tp2',
+            'tp2': 'tp2',
+            'tp3_hit': 'tp3',
+            'tp_3': 'tp3',
+            'take_profit_3': 'tp3',
+            'tp3': 'tp3',
+            'sl_hit': 'sl',
+            'stop_loss': 'sl',
+            'sl': 'sl',
+            'manual_close': 'manual',
+            'manual': 'manual',
+            'breakeven': 'manual',
+        }
+
+        detailed_outcomes = {
+            'tp1_hit': ('tp1', 'win'),
+            'tp2_hit': ('tp2', 'win'),
+            'tp3_hit': ('tp3', 'win'),
+            'tp1': ('tp1', 'win'),
+            'tp2': ('tp2', 'win'),
+            'tp3': ('tp3', 'win'),
+            'sl_hit': ('sl', 'loss'),
+            'sl': ('sl', 'loss'),
+            'stop_loss': ('sl', 'loss'),
+            'manual_close': ('manual', 'breakeven'),
+            'manual': ('manual', 'breakeven'),
+            'breakeven': ('manual', 'breakeven'),
+        }
+
+        allowed_closed = {'tp1', 'tp2', 'tp3', 'sl', 'manual'}
+
+        if closed_val in closed_aliases:
+            closed_val = closed_aliases[closed_val]
+        elif closed_val and closed_val not in allowed_closed:
+            closed_val = ''
+
+        outcome_category = None
+
+        if outcome_val in detailed_outcomes:
+            mapped_closed, mapped_outcome = detailed_outcomes[outcome_val]
+            closed_val = closed_val or mapped_closed
+            outcome_category = mapped_outcome
+        elif outcome_val in {'win', 'loss', 'breakeven'}:
+            outcome_category = outcome_val
+
+        if outcome_category is None:
+            if closed_val in {'tp1', 'tp2', 'tp3'}:
+                outcome_category = 'win'
+            elif closed_val == 'sl':
+                outcome_category = 'loss'
+            elif closed_val == 'manual':
+                # Manual closes depend on realised PnL
+                if pnl_percent > 0:
+                    outcome_category = 'win'
+                elif pnl_percent < 0:
+                    outcome_category = 'loss'
+                else:
+                    outcome_category = 'breakeven'
+
+        if outcome_category is None:
+            if pnl_percent > 0:
+                outcome_category = 'win'
+            elif pnl_percent < 0:
+                outcome_category = 'loss'
+            else:
+                outcome_category = 'breakeven'
+
+        if not closed_val:
+            if outcome_category == 'win':
+                closed_val = 'tp1'
+            elif outcome_category == 'loss':
+                closed_val = 'sl'
+            else:
+                closed_val = 'manual'
+
+        return outcome_category, closed_val
+    
     def add_trade(self, user_id: int, trade_data: Dict) -> Optional[int]:
         """Add new trade to tracking and return trade id"""
         try:
@@ -376,8 +518,13 @@ class TradeTracker:
             st.error(f"Failed to add trade: {str(e)}")
             return None
     
-    def update_trade_outcome(self, trade_id: int, exit_price: float, outcome: str, exit_time: datetime = None) -> bool:
-        """Update trade with exit information"""
+    def update_trade_outcome(self, 
+                             trade_id: int, 
+                             exit_price: float, 
+                             outcome: str, 
+                             closed_reason: Optional[str] = None, 
+                             exit_time: datetime = None) -> bool:
+        """Update trade with exit information."""
         try:
             conn = self.db.get_connection()
             cursor = conn.cursor()
@@ -411,14 +558,16 @@ class TradeTracker:
             entry_dt = datetime.fromisoformat(entry_time_str.replace('Z', '+00:00'))
             duration_minutes = int((exit_time - entry_dt).total_seconds() / 60)
             
+            outcome_category, normalized_reason = self._normalize_outcome_inputs(outcome, closed_reason, pnl_percent)
+
             # Update trade
             cursor.execute("""
                 UPDATE trades SET
-                    exit_price = ?, outcome = ?, status = 'closed',
+                    exit_price = ?, outcome = ?, closed_reason = ?, status = 'closed',
                     pnl_usdt = ?, pnl_percent = ?, roi_percent = ?,
                     exit_time = ?, duration_minutes = ?
                 WHERE id = ?
-            """, (exit_price, outcome, pnl_usdt, pnl_percent, roi_percent, 
+            """, (exit_price, outcome_category, normalized_reason, pnl_usdt, pnl_percent, roi_percent, 
                   exit_time, duration_minutes, trade_id))
             
             conn.commit()
@@ -570,6 +719,7 @@ class AnalyticsDashboard:
                 query = """
                     SELECT 
                         outcome,
+                        closed_reason,
                         safety_score,
                         timeframe,
                         COUNT(*) as count
@@ -578,13 +728,14 @@ class AnalyticsDashboard:
                     AND entry_time >= date('now', '-{} days')
                     AND status = 'closed'
                     AND outcome IS NOT NULL
-                    GROUP BY outcome, safety_score, timeframe
+                    GROUP BY outcome, closed_reason, safety_score, timeframe
                 """.format(days)
                 params = [user_id]
             else:
                 query = """
                     SELECT 
                         outcome,
+                        closed_reason,
                         safety_score,
                         timeframe,
                         COUNT(*) as count
@@ -592,7 +743,7 @@ class AnalyticsDashboard:
                     WHERE entry_time >= date('now', '-{} days')
                     AND status = 'closed'
                     AND outcome IS NOT NULL
-                    GROUP BY outcome, safety_score, timeframe
+                    GROUP BY outcome, closed_reason, safety_score, timeframe
                 """.format(days)
                 params = []
             
@@ -611,8 +762,8 @@ class AnalyticsDashboard:
             
             # Calculate overall statistics
             total_trades = df['count'].sum()
-            sl_hits = df[df['outcome'] == 'sl_hit']['count'].sum()
-            tp_hits = df[df['outcome'].str.contains('tp', case=False, na=False)]['count'].sum()
+            sl_hits = df[df['closed_reason'] == 'sl']['count'].sum()
+            tp_hits = df[df['closed_reason'].isin(['tp1', 'tp2', 'tp3'])]['count'].sum()
             
             success_rate = (tp_hits / total_trades * 100) if total_trades > 0 else 0
             
@@ -621,7 +772,7 @@ class AnalyticsDashboard:
             for score in range(1, 11):
                 score_trades = df[df['safety_score'] == score]['count'].sum()
                 score_tp = df[(df['safety_score'] == score) & 
-                            df['outcome'].str.contains('tp', case=False, na=False)]['count'].sum()
+                              (df['outcome'] == 'win')]['count'].sum()
                 
                 if score_trades > 0:
                     safety_stats[score] = {
@@ -635,8 +786,7 @@ class AnalyticsDashboard:
                 if pd.isna(tf):
                     continue
                 tf_trades = df[df['timeframe'] == tf]['count'].sum()
-                tf_tp = df[(df['timeframe'] == tf) & 
-                         df['outcome'].str.contains('tp', case=False, na=False)]['count'].sum()
+                tf_tp = df[(df['timeframe'] == tf) & (df['outcome'] == 'win')]['count'].sum()
                 
                 timeframe_stats[tf] = {
                     'trades': tf_trades,

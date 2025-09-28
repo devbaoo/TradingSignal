@@ -5,6 +5,8 @@ Critical system constants for unified behavior across all modules.
 Last Updated: September 27, 2025
 """
 
+from typing import Any, Dict
+
 # Risk/Reward Minimum Threshold
 # All signals with R/R below this value will be rejected
 MIN_RR = 2.0
@@ -59,6 +61,46 @@ def get_regime_strength(regime):
     if hasattr(regime, 'regime_strength'):
         return float(getattr(regime, 'regime_strength', DEFAULT_REGIME_STRENGTH))
     return DEFAULT_REGIME_STRENGTH
+
+
+def normalize_regime(regime: Any) -> Dict[str, Any]:
+    """Return a normalized regime dictionary regardless of input type.
+
+    Ensures downstream code can rely on a consistent schema with both
+    ``strength`` and ``regime_strength`` keys plus the common metadata fields.
+    """
+
+    if regime is None:
+        return {
+            'trend_regime': 'UNKNOWN',
+            'volatility_regime': 'UNKNOWN',
+            'momentum_regime': 'NEUTRAL',
+            'is_trending': False,
+            'strength': DEFAULT_REGIME_STRENGTH,
+            'regime_strength': DEFAULT_REGIME_STRENGTH,
+        }
+
+    if isinstance(regime, dict):
+        strength = float(regime.get('strength', regime.get('regime_strength', DEFAULT_REGIME_STRENGTH)))
+        normalized = dict(regime)  # shallow copy
+        normalized['strength'] = strength
+        normalized['regime_strength'] = strength
+        normalized.setdefault('trend_regime', normalized.get('trend', 'UNKNOWN'))
+        normalized.setdefault('volatility_regime', normalized.get('volatility', 'UNKNOWN'))
+        normalized.setdefault('momentum_regime', normalized.get('momentum', 'NEUTRAL'))
+        normalized.setdefault('is_trending', bool(normalized.get('is_trending', strength > 0.5)))
+        return normalized
+
+    # Dataclass or object fallback
+    strength = get_regime_strength(regime)
+    return {
+        'trend_regime': getattr(regime, 'trend_regime', 'UNKNOWN'),
+        'volatility_regime': getattr(regime, 'volatility_regime', 'UNKNOWN'),
+        'momentum_regime': getattr(regime, 'momentum_regime', 'NEUTRAL'),
+        'is_trending': bool(getattr(regime, 'is_trending', strength > 0.5)),
+        'strength': strength,
+        'regime_strength': strength,
+    }
 
 
 def safe_get_signal_field(signal_data, field_name, default=None):

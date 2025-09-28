@@ -49,7 +49,7 @@
 
 - **Performance Metrics**: Win rates, profit factors, Sharpe ratios, max drawdowns
 - **Risk Analysis**: Portfolio exposure, correlation analysis, risk utilization tracking
-- **Outcome Classification**: SL hits, TP1/2/3 hits, manual closes với success rates
+- **Outcome Classification**: `outcome` = win/loss/breakeven + `closed_reason` = tp1/tp2/tp3/sl/manual với success rates
 - **Time-based Analysis**: Performance trends across different market conditions
 
 ### 🎯 **Professional Portfolio Management**
@@ -123,7 +123,7 @@
 
 - **Professional Streamlit GUI** với institutional styling
 - **Real-time charts** với 20+ technical indicators
-- **Intelligent Auto-scan** với guaranteed top 5 signals
+- **Intelligent Auto-scan** trả 0–5 tín hiệu chất lượng cao (demo mode có thể ép ít nhất 1)
 - **Portfolio management dashboard** với risk metrics
 - **Analytics integration** với performance tracking
 - **Copy-paste ready** Binance Futures setup commands
@@ -392,7 +392,7 @@ users (id, username, email, password_hash, created_at, subscription_tier)
 -- Comprehensive trade tracking
 trades (id, user_id, symbol, direction, entry_price, exit_price,
         position_size_usdt, leverage, stop_loss, take_profit_1/2/3,
-        status, outcome, pnl_usdt, roi_percent, safety_score,
+        status, outcome, closed_reason, pnl_usdt, roi_percent, safety_score,
         risk_reward_ratio, timeframe, market_regime, entry_time, exit_time)
 
 -- Daily performance summaries
@@ -415,7 +415,7 @@ system_performance (id, date, total_signals_generated, avg_safety_score,
 
 **Auto-Scan Enhancement:**
 
-- **Guaranteed Results**: Always returns top 5 signals (no empty results)
+- **Adaptive Results**: Trả về 0–5 tín hiệu tùy chất lượng (demo có thể buộc ít nhất 1)
 - **Quality Filtering**: Market condition adaptive thresholds
 - **Circuit Breaker Integration**: Automatic suspension với loss limits
 - **Performance**: Complete scan in ~30 seconds (75% faster than v3.0)

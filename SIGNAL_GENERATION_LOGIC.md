@@ -720,13 +720,13 @@ def generate_signal_from_data(self, symbol, df, timeframe, balance, leverage, mi
         risk_reward_ratio = atr_results['risk_reward_ratio']
 
         # INSTITUTIONAL R/R VALIDATION (Critical)
-        if risk_reward_ratio < 1.5:  # Strict minimum for institutional trading
+        if risk_reward_ratio < MIN_RR:  # Hard floor at 2.0 R/R across the stack
             return None  # R/R too low for institutional standards
 
         # Safety score calculation (calibrated)
         confidence_score = latest_signal.get('confidence', 0.5)
-        regime = latest_signal.get('regime')
-        regime_strength = regime.regime_strength if regime else 0.5
+        regime_info = normalize_regime(latest_signal.get('regime'))
+        regime_strength = regime_info['strength']
 
         safety_score = min(10, int(
             confidence_score * 4 +
@@ -1982,8 +1982,8 @@ class BatchProcessor:
 
         return results  # Returns loaded data for available symbols
 
-    def generate_batch_signals(self, batch_data, params):
-        """Optimized signal generation cho auto-scan top 5"""
+    def generate_batch_signals(self, batch_data, params, allow_zero_results=True):
+        """Optimized signal generation cho auto-scan thích ứng"""
 
         all_signals = []
         for symbol in batch_data:
@@ -1993,9 +1993,20 @@ class BatchProcessor:
             if signal and 'entry_price' in signal:  # Valid signal only
                 all_signals.append((symbol, signal))
 
-        # Sort by safety score and return top 5
         all_signals.sort(key=lambda x: x[1]['safety_score'], reverse=True)
-        return all_signals[:5]  # Always return top 5 for auto-scan
+
+        filtered_signals, rejections = self.smart_auto_scan_manager.filter_signals_by_quality(
+            [s for _, s in all_signals],
+            market_condition=self.current_market_condition,
+            correlation_manager=self.correlation_manager,
+            force_minimum=not allow_zero_results
+        )
+
+        max_positions = self.smart_auto_scan_manager.quality_thresholds[
+            self.current_market_condition
+        ].max_position_count
+
+        return filtered_signals[:max_positions]
 ```
 
 #### **4. Memory Optimization**
@@ -2039,8 +2050,8 @@ def clean_session_cache():
 #### **5. Auto-Scan Performance Enhancement**
 
 ```python
-def optimized_auto_scan():
-    """Production-optimized auto-scan với guaranteed top 5 signals"""
+def optimized_auto_scan(allow_zero_results=True, demo_mode=False):
+    """Production-optimized auto-scan với adaptive signal counts"""
 
     # Step 1: Batch load all 80 symbols in parallel
     status_text.text("⚡ Loading market data...")
@@ -2061,16 +2072,31 @@ def optimized_auto_scan():
             if signal and 'entry_price' in signal:
                 all_signals.append((symbol, signal))
 
-    # Step 3: Sort by safety score và return top 5
+    # Step 3: Apply quality filter and respect max position limits
     if all_signals:
-        all_signals.sort(key=lambda x: x[1]['safety_score'], reverse=True)
-        top_signals = all_signals[:5]  # Always top 5
+        sorted_signals = [s for _, s in sorted(all_signals, key=lambda x: x[1]['safety_score'], reverse=True)]
+        filtered, rejection_reasons = self.smart_auto_scan_manager.filter_signals_by_quality(
+            sorted_signals,
+            market_condition=self.current_market_condition,
+            correlation_manager=self.correlation_manager,
+            force_minimum=demo_mode and not allow_zero_results
+        )
 
-        status_text.text(f"✅ Found {len(all_signals)} signals, showing top 5")
+        max_positions = self.smart_auto_scan_manager.quality_thresholds[
+            self.current_market_condition
+        ].max_position_count
+
+        top_signals = filtered[:max_positions]
+
+        if top_signals:
+            status_text.text(f"✅ Returning {len(top_signals)} high-quality signals (from {len(all_signals)} candidates)")
+        else:
+            status_text.text("⚠️ No signals met quality thresholds")
+
         return top_signals
-    else:
-        status_text.text("⚠️ No valid signals found in current market conditions")
-        return []
+
+    status_text.text("⚠️ No valid signals found in current market conditions")
+    return []
 
 # PERFORMANCE METRICS:
 # - Batch Loading: 80 symbols in ~15-20 seconds (vs 3-5 minutes sequential)
@@ -2251,7 +2277,7 @@ Trading Insight Pro Version 4.0 represents a mature, production-ready institutio
 1. **Production-Ready Architecture**: Complete removal of debug code, professional UI, clean error handling
 2. **Performance Optimization**: 75% faster processing, intelligent caching, batch processing, memory optimization
 3. **Institutional Risk Management**: Portfolio limits, correlation clustering, liquidation safety, circuit breakers
-4. **Enhanced Auto-Scan**: Guaranteed top 5 signals, parallel processing, always-available results
+4. **Enhanced Auto-Scan**: Returns up to 5 high-quality signals with optional demo fallback
 5. **Professional Quality**: Clean codebase, no debug artifacts, institutional-grade interface
 6. **Real-Time Performance**: 3-minute caching, parallel execution, optimized data flow
 7. **Comprehensive Risk Controls**: Multi-tier protection, natural R/R validation, safety-based positioning
@@ -2264,7 +2290,7 @@ Trading Insight Pro Version 4.0 represents a mature, production-ready institutio
 - **Intelligent Caching**: Session state caching với 3-minute TTL
 - **Memory Optimization**: 50% memory reduction, automatic cleanup
 - **Parallel Execution**: ThreadPoolExecutor với 4 workers for rate limit compliance
-- **Always-Available Results**: Auto-scan guaranteed to return top 5 signals
+- **Adaptive Results**: Returns 0–5 signals based on quality thresholds (demo mode can force at least 1)
 
 #### **Institutional Controls:**
 
@@ -2371,7 +2397,8 @@ CREATE TABLE trades (
 
     -- Status and outcome tracking
     status TEXT DEFAULT 'open',        -- open/closed/cancelled
-    outcome TEXT,                      -- sl_hit/tp1_hit/tp2_hit/tp3_hit/manual_close
+    outcome TEXT,                      -- win/loss/breakeven
+    closed_reason TEXT,                -- tp1/tp2/tp3/sl/manual
 
     -- Performance metrics
     pnl_usdt REAL DEFAULT 0,

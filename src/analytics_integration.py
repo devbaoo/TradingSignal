@@ -66,11 +66,32 @@ class AnalyticsIntegrator:
         
         try:
             # Convert signal data to trade format
+            direction = signal_data.get('direction') or signal_data.get('action')
+            if direction:
+                direction = direction.upper()
+
+            position_size_usdt = signal_data.get('position_size_usdt')
+            if position_size_usdt is None:
+                position_size_usdt = signal_data.get('position_size')
+            if position_size_usdt is None:
+                position_size_usdt = 100.0
+
+            regime_info = signal_data.get('market_regime')
+            if not regime_info:
+                raw_regime = signal_data.get('regime')
+                if isinstance(raw_regime, dict):
+                    trend = raw_regime.get('trend_regime', 'UNKNOWN')
+                    vol = raw_regime.get('volatility_regime', 'UNKNOWN')
+                    strength = raw_regime.get('strength', raw_regime.get('regime_strength', 0.5))
+                    regime_info = f"{trend} | {vol} | Strength: {strength:.2f}"
+                else:
+                    regime_info = raw_regime
+
             trade_data = {
                 'symbol': signal_data.get('symbol'),
-                'direction': signal_data.get('direction', signal_data.get('action')),  # LONG/SHORT
+                'direction': direction,
                 'entry_price': signal_data.get('entry_price'),
-                'position_size_usdt': signal_data.get('position_size_usdt', signal_data.get('position_size', 100)),
+                'position_size_usdt': position_size_usdt,
                 'leverage': signal_data.get('leverage', 1),
                 'stop_loss': signal_data.get('stop_loss'),
                 'take_profit_1': signal_data.get('take_profit_1'),
@@ -81,7 +102,7 @@ class AnalyticsIntegrator:
                 'margin_required': signal_data.get('margin_required'),
                 'liquidation_price': signal_data.get('liquidation_price'),
                 'timeframe': signal_data.get('timeframe'),
-                'market_regime': signal_data.get('market_regime', signal_data.get('regime')),
+                'market_regime': regime_info,
                 'volatility_level': signal_data.get('volatility_level'),
                 'signal_source': 'trading_insight',
                 'strategy_version': '4.2.1'
@@ -135,8 +156,13 @@ class AnalyticsIntegrator:
                 for i, trade in enumerate(reversed(recent_trades)):
                     st.sidebar.text(f"{trade['symbol']} @ {trade['entry_price']}")
     
-    def update_trade_outcome(self, symbol: str, entry_price: float, exit_price: float, outcome: str) -> bool:
-        """Update trade outcome (for manual use)"""
+    def update_trade_outcome(self, 
+                             symbol: str, 
+                             entry_price: float, 
+                             exit_price: float, 
+                             outcome: str, 
+                             closed_reason: Optional[str] = None) -> bool:
+        """Update trade outcome (for manual use)."""
         if not self.enabled or not self.current_user_id:
             return False
         
@@ -156,7 +182,7 @@ class AnalyticsIntegrator:
             trade_row = cursor.fetchone()
             if trade_row:
                 trade_id = trade_row[0]
-                success = trade_tracker.update_trade_outcome(trade_id, exit_price, outcome)
+                success = trade_tracker.update_trade_outcome(trade_id, exit_price, outcome, closed_reason)
                 conn.close()
                 return success
             
@@ -167,18 +193,23 @@ class AnalyticsIntegrator:
             st.error(f"Failed to update trade outcome: {str(e)}")
             return False
 
-    def update_trade_outcome_by_id(self, trade_id: int, exit_price: float, outcome: str) -> bool:
-        """Update trade outcome directly by trade id"""
+    def update_trade_outcome_by_id(self, 
+                                   trade_id: int, 
+                                   exit_price: float, 
+                                   outcome: str, 
+                                   closed_reason: Optional[str] = None) -> bool:
+        """Update trade outcome directly by trade id."""
         if not self.enabled or not self.current_user_id:
             return False
         try:
-            success = trade_tracker.update_trade_outcome(trade_id, exit_price, outcome)
+            success = trade_tracker.update_trade_outcome(trade_id, exit_price, outcome, closed_reason)
             if success and 'tracked_trades' in st.session_state:
                 for trade in st.session_state.tracked_trades:
                     if trade.get('trade_id') == trade_id:
                         trade['status'] = 'closed'
                         trade['closed_at'] = datetime.now().isoformat()
                         trade['outcome'] = outcome
+                        trade['closed_reason'] = closed_reason or trade.get('closed_reason')
                         trade['exit_price'] = exit_price
                         break
             return success

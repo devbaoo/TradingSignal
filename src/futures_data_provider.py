@@ -491,7 +491,8 @@ class BinanceFuturesDataProvider:
             'liquidation_price': liquidation_price,
             'mmr_used': mmr,
             'bracket_info': f"MMR: {mmr*100:.2f}% (Bracket for ${position_size_usdt:,.0f})",
-            'distance_percent': abs(entry_price - liquidation_price) / entry_price * 100
+            'distance_percent': abs(entry_price - liquidation_price) / entry_price * 100,
+            'mmr_mode': 'exact'
         }
 
     def _calculate_simple_liquidation(self, entry_price: float, leverage: float, direction: str) -> Dict:
@@ -507,5 +508,6 @@ class BinanceFuturesDataProvider:
             'liquidation_price': liquidation_price,
             'mmr_used': mmr,
             'bracket_info': f"Simple MMR: {mmr*100:.2f}%",
-            'distance_percent': abs(entry_price - liquidation_price) / entry_price * 100
+            'distance_percent': abs(entry_price - liquidation_price) / entry_price * 100,
+            'mmr_mode': 'approx'
         }
